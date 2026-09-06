@@ -34,6 +34,41 @@ import loader
 from energy_maniskill import sphere_dirs
 
 
+class MultiLatents:
+    """Read-only view over several latent memmaps as one array.
+
+    Lets a run train on the reaching and grasping datasets together without
+    copying ~9 GB of latents into a single file.
+    """
+
+    def __init__(self, dirs):
+        self.mms = [np.load(f"{d}/latents.npy", mmap_mode="r") for d in dirs]
+        self.sizes = [len(m) for m in self.mms]
+        self.offs = np.cumsum([0] + self.sizes)
+        self.shape = (self.offs[-1],) + self.mms[0].shape[1:]
+
+    def take(self, idx):
+        """idx: array of global indices -> (len(idx), tokens, D) float32."""
+        out = np.empty((len(idx),) + self.shape[1:], np.float32)
+        for j, gi in enumerate(idx):
+            k = int(np.searchsorted(self.offs, gi, side="right") - 1)
+            out[j] = self.mms[k][gi - self.offs[k]]
+        return out
+
+
+def load_meta(dirs):
+    """Concatenate metadata, offsetting episode ids so they stay unique."""
+    A, S, E, base = [], [], [], 0
+    steps = None
+    for d in dirs:
+        m = np.load(f"{d}/meta.npz")
+        A.append(m["actions"]); S.append(m["states"])
+        E.append(m["episode"].astype(np.int64) + base)
+        base += int(m["episode"].max()) + 1
+        steps = int(m["steps"])
+    return (np.concatenate(A), np.concatenate(S), np.concatenate(E), steps)
+
+
 def trainable_params(predictor, mode, top_blocks):
     for p in predictor.parameters():
         p.requires_grad_(False)
@@ -78,8 +113,8 @@ def eval_rank_shell(predictor, latents, actions, states, pairs, dirs,
         cand = np.concatenate([(dirs * nt).astype(np.float32), true[None]], 0)
         cand7 = np.concatenate(
             [cand, np.zeros((len(cand), 4), np.float32)], axis=1)
-        z = torch.as_tensor(np.asarray(latents[i]), device=device).float()[None]
-        tgt = torch.as_tensor(np.asarray(latents[i + 1]), device=device).float()[None]
+        z = torch.as_tensor(latents.take([i]), device=device).float()
+        tgt = torch.as_tensor(latents.take([i + 1]), device=device).float()
         st = torch.as_tensor(states[i], device=device).float()[None, None]
         e = []
         for j in range(0, len(cand7), chunk):
@@ -95,12 +130,16 @@ def eval_rank_shell(predictor, latents, actions, states, pairs, dirs,
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default="data")
+    ap.add_argument("--data", nargs="+", default=["data"],
+                    help="one or more dataset dirs; latents are read in place")
     ap.add_argument("--epochs", type=int, default=4)
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--wd", type=float, default=0.01)
     ap.add_argument("--trainable", default="top", choices=["cond", "top", "all"])
+    ap.add_argument("--adam8bit", action="store_true",
+                    help="bitsandbytes Adam8bit: ~0.6 GB of state instead of "
+                         "~2.4 GB, which is what makes --trainable all fit in 6 GB")
     ap.add_argument("--top-blocks", type=int, default=6)
     ap.add_argument("--val-frac", type=float, default=0.15)
     ap.add_argument("--n-eval", type=int, default=48)
@@ -112,16 +151,15 @@ def main():
     a = ap.parse_args()
 
     device = "cuda"
-    latents = np.load(os.path.join(a.data, "latents.npy"), mmap_mode="r")
-    meta = np.load(os.path.join(a.data, "meta.npz"))
-    actions, states, episode = meta["actions"], meta["states"], meta["episode"]
-    print(f"dataset: {latents.shape[0]} frames, {episode.max()+1} episodes, "
-          f"camera={meta['camera']}")
+    latents = MultiLatents(a.data)
+    actions, states, episode, n_steps = load_meta(a.data)
+    print(f"dataset: {latents.shape[0]} frames, {episode.max()+1} episodes "
+          f"from {len(a.data)} source(s): {', '.join(a.data)}")
 
     n_ep = int(episode.max()) + 1
     n_val = max(1, int(n_ep * a.val_frac))
     val_eps = set(range(n_ep - n_val, n_ep))
-    pairs = make_pairs(episode, int(meta["steps"]))
+    pairs = make_pairs(episode, n_steps)
     tr_pairs = np.array([i for i in pairs if episode[i] not in val_eps])
     va_pairs = np.array([i for i in pairs if episode[i] in val_eps])
     print(f"train pairs {len(tr_pairs)}, val pairs {len(va_pairs)} "
@@ -141,7 +179,13 @@ def main():
           f"{sum(p.numel() for p in predictor.parameters())/1e6:.1f}M "
           f"({a.trainable})")
 
-    opt = torch.optim.AdamW([p for _, p in named], lr=a.lr, weight_decay=a.wd)
+    params = [p for _, p in named]
+    if a.adam8bit:
+        import bitsandbytes as bnb
+        opt = bnb.optim.Adam8bit(params, lr=a.lr, weight_decay=a.wd)
+        print("optimizer: bitsandbytes Adam8bit")
+    else:
+        opt = torch.optim.AdamW(params, lr=a.lr, weight_decay=a.wd)
     dirs = sphere_dirs(48)
 
     predictor.eval()
@@ -158,8 +202,8 @@ def main():
         tot, nb = 0.0, 0
         for k in range(0, len(order) - a.batch + 1, a.batch):
             idx = np.sort(order[k:k + a.batch])
-            z = torch.as_tensor(np.asarray(latents[idx]), device=device).float()
-            tgt = torch.as_tensor(np.asarray(latents[idx + 1]), device=device).float()
+            z = torch.as_tensor(latents.take(idx), device=device).float()
+            tgt = torch.as_tensor(latents.take(idx + 1), device=device).float()
             act = torch.as_tensor(actions[idx], device=device).float()[:, None]
             st = torch.as_tensor(states[idx], device=device).float()[:, None]
 
@@ -179,8 +223,8 @@ def main():
             vl, vn = 0.0, 0
             for k in range(0, len(va_pairs) - a.batch + 1, a.batch):
                 idx = va_pairs[k:k + a.batch]
-                z = torch.as_tensor(np.asarray(latents[idx]), device=device).float()
-                tgt = torch.as_tensor(np.asarray(latents[idx + 1]), device=device).float()
+                z = torch.as_tensor(latents.take(idx), device=device).float()
+                tgt = torch.as_tensor(latents.take(idx + 1), device=device).float()
                 act = torch.as_tensor(actions[idx], device=device).float()[:, None]
                 st = torch.as_tensor(states[idx], device=device).float()[:, None]
                 out = loader.predict_next(predictor, z, act, st)

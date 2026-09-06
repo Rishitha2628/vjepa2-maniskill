@@ -312,6 +312,36 @@ roughly a 4x improvement. More ManiSkill data, training all 305M params rather
 than 78M, or a shorter effective horizon are the levers. Cost re-weighting and
 better search are not.
 
+**9. Full-parameter training improves action ranking but NOT prediction error.**
+Result 8 identified prediction error (~0.194) as the thing gating grasping, with
+a target of ~0.05. The obvious lever is capacity and data, so: all 305M params
+(vs 78M), both datasets merged (11,500 frames vs 7,500), bitsandbytes Adam8bit
+plus gradient checkpointing to fit in 6 GB, lr 5e-5.
+
+| run | trainable | frames | val L1 | rank_shell |
+|---|---|---|---|---|
+| reach fine-tune | 78M | 4,000 | 0.2004 | 0.1159 |
+| grasp fine-tune | 78M | 7,500 | 0.1939 | 0.1354 |
+| full, epoch 1 | 305M | 11,500 | 0.2034 | 0.1098 |
+| full, epoch 2 | 305M | 11,500 | 0.1969 | 0.0959 |
+| full, epoch 3 | 305M | 11,500 | **0.1939** | **0.0833** |
+
+Two quantities move in opposite ways, and the distinction is the point:
+
+- **Action ranking improves substantially** — 0.1354 to **0.0833**, the best of
+  any run. More capacity and more data genuinely help the model tell good
+  actions from bad ones one step ahead.
+- **Prediction error does not move at all.** Val L1 lands on **0.1939** — within
+  0.0000 of where the 4x-smaller model on 65% of the data plateaued. Per-epoch
+  decrements halve (−0.0065, −0.0030), so the asymptote is ~0.19, not 0.05.
+
+So the ~0.19 error floor is **not a capacity limit and not a dataset-size
+limit**. Quadrupling parameters and nearly tripling data left it unchanged to
+four decimal places. That points at the data *distribution* (random and
+scripted-with-noise rollouts) or at the one-step latent objective itself, not at
+model scale — and it means "train a bigger model for longer" is not the route to
+centimetre-precision planning with this recipe.
+
 ## What to try next
 
 Roughly in order of expected value per unit effort:
@@ -323,11 +353,16 @@ Roughly in order of expected value per unit effort:
    a. ~~Longer horizon.~~ Tried (`rollout=3`), no effect.
    b. ~~Reweight the objective.~~ Tried (lam 0/0.5/2.0), no effect.
    c. ~~Subgoals.~~ Tried; halves the approach gap but still 0/6.
-   d. **Reduce prediction error.** This is the one that follows from result 8:
-      the planning signal at grasp scale (~0.05) sits below the model's own
-      error (~0.194). Train all 305M params instead of 78M (needs 8-bit Adam at
-      6 GB), collect more than 7.5k frames, or shorten the effective horizon.
-      Nothing about the cost or the search will help until this moves.
+   d. ~~Reduce prediction error by scaling.~~ **Tried** — result 9. All 305M
+      params on 11.5k frames leaves val L1 at 0.1939, identical to 78M on 7.5k.
+      Not a capacity or data-volume limit.
+   e. **What is actually left**, given results 8-9: the error floor is a
+      property of the objective and the data distribution, so change those.
+      Multi-step rollout losses rather than one-step; on-policy data from the
+      planner itself instead of random/scripted rollouts; or a different
+      prediction target. Alternatively accept that latent-space CEM is the wrong
+      tool for contact-precision tasks and pair the world model with a policy
+      that handles the final centimetres.
 3. **Try the simulation-trained checkpoints.** `facebook/jepa-wms` also carries
    `jepa_wm_metaworld.pth.tar` (0.21 GB) and `dino_wm_metaworld.pth.tar`
    (0.28 GB), trained on sim rather than real footage. Different architecture,
