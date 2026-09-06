@@ -252,6 +252,66 @@ That makes grasping a different problem from reaching, rather than a harder
 dose of the same one — reaching succeeded precisely because arm position is what
 dominates the latent distance.
 
+**8. Why grasping fails: the model's prediction error swamps the planning
+signal.** Three fixes were tried and all failed, and the diagnosis only became
+clear by ruling them out in order.
+
+*Fix 1 — grasp-aware cost and a longer horizon* (`grasp_cost.py`,
+`plan_grasp.py`). Score rollouts with
+`L1(z_final, z_goal) - lam * max_h P(grasped | z_h)` at `rollout=3`:
+
+| lam | grasp | lift | success |
+|---|---|---|---|
+| 0.0 | 0.0% | 0.0000 m | 0.0% |
+| 0.5 | 0.0% | 0.0000 m | 0.0% |
+| 2.0 | 0.0% | 0.0000 m | 0.0% |
+
+*Is the predictor able to imagine a grasp at all?* (`probe_imagination.py`)
+Partly — it reproduces **41%** of the real grasp signal, so "it cannot imagine
+contact" is refuted. (This also exposed a calibration bug worth noting: the
+probe is fitted on *encoder* latents but applied to *predictor* latents, which
+sit in a different region — predicted scores run ~0.15 low.)
+
+*Where does the gripper actually end up?* The decisive measurement: the planner
+stalls **0.148 m** from the cube, and a grasp needs <0.02 m. It never approaches
+the object at all. The single goal image shows the arm at the goal *holding* the
+cube, and latent L1 to that image is minimised by flying straight to the goal
+position. Picking the cube up is a **detour** that temporarily increases
+distance, so greedy goal-matching provably will not do it.
+
+*Fix 2 — subgoal images* (`subgoal_plan.py`): four waypoints (above cube, at
+cube, closed, carried). This halves the gap — closest approach **0.148 → 0.106 m**,
+best seed 0.058 m — confirming the shortcut diagnosis, but still grasps 0/6.
+
+*Fix 3 — is the latent too coarse to servo?* (`latent_precision.py`) **No, and
+this is the answer.** Measuring latent L1 against controlled displacements:
+
+| offset | latent L1 | % of 16 cm |
+|---|---|---|
+| 0.5 cm | 0.193 | 42.8% |
+| 2 cm | 0.281 | 62.5% |
+| 4 cm | 0.337 | 75.0% |
+| 16 cm | 0.450 | 100% |
+
+The latent is highly sensitive — 0.5 cm already gives 43% of a 16 cm response —
+but the response **saturates**. Any displacement immediately costs ~0.19, after
+which distinguishing 2 cm from 4 cm is worth only **0.056**.
+
+Set that against the model's own one-step prediction error, **0.194** (val L1,
+result 5). *The prediction error is ~3.5x larger than the difference the planner
+must resolve.* CEM is optimising noise.
+
+This explains the whole arc coherently. Reaching works because 10-15 cm motions
+produce latent differences (~0.45) far above the error floor. Grasping fails
+because centimetre positioning produces differences (~0.05) far below it. The
+limit is not representation, not the cost function and not the search — it is
+the **accuracy of the world model relative to the precision the task demands**.
+
+The actionable consequence: to grasp, prediction error has to drop below ~0.05,
+roughly a 4x improvement. More ManiSkill data, training all 305M params rather
+than 78M, or a shorter effective horizon are the levers. Cost re-weighting and
+better search are not.
+
 ## What to try next
 
 Roughly in order of expected value per unit effort:
@@ -260,13 +320,14 @@ Roughly in order of expected value per unit effort:
 2. ~~Fine-tune the AC predictor.~~ **Done, worked for reaching** — result 5.
 3. ~~Grasping.~~ **Tried, does not work** — results 6-7. The informative next
    steps follow from the diagnosis, in order:
-   a. **Longer horizon.** `rollout=1` cannot represent "close now, lift later".
-      Try `rollout=3-5`; costs linearly more compute per planning step.
-   b. **Reweight the objective.** Score with a cost that emphasises
-      grasp-relevant latent directions (the `probe_grasp.py` classifier gives
-      one directly) instead of uniform L1 over 1408 dims.
-   c. **Subgoals.** Give the planner intermediate goal images (above cube,
-      fingers around cube, lifted) rather than one final image.
+   a. ~~Longer horizon.~~ Tried (`rollout=3`), no effect.
+   b. ~~Reweight the objective.~~ Tried (lam 0/0.5/2.0), no effect.
+   c. ~~Subgoals.~~ Tried; halves the approach gap but still 0/6.
+   d. **Reduce prediction error.** This is the one that follows from result 8:
+      the planning signal at grasp scale (~0.05) sits below the model's own
+      error (~0.194). Train all 305M params instead of 78M (needs 8-bit Adam at
+      6 GB), collect more than 7.5k frames, or shorten the effective horizon.
+      Nothing about the cost or the search will help until this moves.
 3. **Try the simulation-trained checkpoints.** `facebook/jepa-wms` also carries
    `jepa_wm_metaworld.pth.tar` (0.21 GB) and `dino_wm_metaworld.pth.tar`
    (0.28 GB), trained on sim rather than real footage. Different architecture,
@@ -297,6 +358,11 @@ Roughly in order of expected value per unit effort:
 | `collect_grasp_data.py` | Scripted-plus-noise dataset that actually contains grasps. |
 | `eval_grasp.py` | Real task outcomes: grasp rate, lift, PickCube success. |
 | `probe_grasp.py` | Is grasp state decodable from the frozen encoder? (yes) |
+| `grasp_cost.py` | Grasp classifier reused as a planning cost term. |
+| `plan_grasp.py` | Grasp-aware CEM with a multi-step horizon. |
+| `probe_imagination.py` | Can the predictor imagine a grasp? (41% of it) |
+| `subgoal_plan.py` | Waypoint-based grasp planning. |
+| `latent_precision.py` | Latent L1 vs displacement -- the precision/error analysis. |
 | `cem_plan.py` | Closed-loop CEM planning. |
 
 ## Practical notes
