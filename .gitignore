@@ -1,0 +1,20 @@
+# --- Large artifacts: regenerate, don't commit ---
+# Cached encoder latents (2.9 GB) -- rebuild with collect_data.py
+data/
+# Fine-tuned predictor weights (294 MB, over GitHub's 100 MB file limit)
+*.pt
+*.npy
+# Recorded trajectories (6-13 MB each) -- rebuild with record.py
+traj*.npz
+# Probe features -- rebuild with probe_reps.py
+probe_feats.npz
+
+# --- Vendored upstream source ---
+# Meta's facebookresearch/vjepa2, cloned by setup.sh. Not redistributed here;
+# it carries its own license.
+vjepa2_src/
+
+# --- Run logs and scratch ---
+*.log
+__pycache__/
+*.pyc
