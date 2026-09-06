@@ -47,27 +47,54 @@ def rollout_scores(predictor, z0, state0, seqs, goal_z, device, dtype, chunk):
 
 
 def cem(predictor, z0, state0, goal_z, device, dtype, rollout=2, samples=64,
-        topk=8, iters=4, maxnorm=0.05, momentum=0.15, chunk=16, rng=None):
-    """Returns (best_action_7, per-iteration best score)."""
+        topk=8, iters=4, maxnorm=0.05, momentum=0.15, chunk=16, rng=None,
+        search_gripper=False, grip_momentum=0.15):
+    """Returns (best_action_7, per-iteration best score).
+
+    The gripper is searched as a separate channel when `search_gripper` is set,
+    following upstream's MPC: it is near-binary rather than a small delta, so it
+    gets its own std (order 1, not `maxnorm`) and its own momentum. Searching it
+    with the translation std would sample gripper deltas around 0.05, which is
+    far too small to ever open or close the hand.
+    """
     rng = rng or np.random.default_rng(0)
-    mean = np.zeros((rollout, 3), np.float32)
-    std = np.full((rollout, 3), maxnorm, np.float32)
+    dim = 4 if search_gripper else 3
+    mean = np.zeros((rollout, dim), np.float32)
+    std = np.zeros((rollout, dim), np.float32)
+    std[:, :3] = maxnorm
+    if search_gripper:
+        std[:, 3] = 1.0
 
     history = []
     for _ in range(iters):
-        s = rng.normal(size=(samples, rollout, 3)).astype(np.float32) * std + mean
-        s = np.clip(s, -maxnorm, maxnorm)
-        seqs = np.concatenate([s, np.zeros((samples, rollout, 4), np.float32)], axis=-1)
+        s = rng.normal(size=(samples, rollout, dim)).astype(np.float32) * std + mean
+        s[:, :, :3] = np.clip(s[:, :, :3], -maxnorm, maxnorm)
+        if search_gripper:
+            s[:, :, 3] = np.clip(s[:, :, 3], -1.0, 1.0)
+            seqs = np.concatenate([
+                s[:, :, :3],
+                np.zeros((samples, rollout, 3), np.float32),
+                s[:, :, 3:4],
+            ], axis=-1)
+        else:
+            seqs = np.concatenate(
+                [s, np.zeros((samples, rollout, 4), np.float32)], axis=-1)
 
         scores = rollout_scores(predictor, z0, state0, seqs, goal_z, device,
                                 dtype, chunk)
         elite = s[np.argsort(scores)[:topk]]
-        mean = elite.mean(0) * (1 - momentum) + mean * momentum
-        std = elite.std(0) * (1 - momentum) + std * momentum
+        m_new, s_new = elite.mean(0), elite.std(0)
+        mean[:, :3] = m_new[:, :3] * (1 - momentum) + mean[:, :3] * momentum
+        std[:, :3] = s_new[:, :3] * (1 - momentum) + std[:, :3] * momentum
+        if search_gripper:
+            mean[:, 3] = m_new[:, 3] * (1 - grip_momentum) + mean[:, 3] * grip_momentum
+            std[:, 3] = s_new[:, 3] * (1 - grip_momentum) + std[:, 3] * grip_momentum
         history.append(float(scores.min()))
 
     action = np.zeros(7, np.float32)
-    action[:3] = mean[0]
+    action[:3] = mean[0, :3]
+    if search_gripper:
+        action[6] = mean[0, 3]
     return action, history
 
 
@@ -90,6 +117,8 @@ def main():
     ap.add_argument("--ckpt", default=None,
                     help="fine-tuned predictor weights from finetune.py")
     ap.add_argument("--camera", default="close", choices=list(record.CAMERAS))
+    ap.add_argument("--search-gripper", action="store_true",
+                    help="also plan the gripper channel (needed for grasping)")
     a = ap.parse_args()
 
     device, dtype = "cuda", torch.float16
@@ -115,14 +144,16 @@ def main():
 
         action, hist = cem(predictor, z0, state, goal_z, device, dtype,
                            rollout=a.rollout, samples=a.samples, topk=a.topk,
-                           iters=a.iters, maxnorm=a.maxnorm, chunk=a.chunk, rng=rng)
+                           iters=a.iters, maxnorm=a.maxnorm, chunk=a.chunk, rng=rng,
+                           search_gripper=a.search_gripper)
 
         n = float(np.linalg.norm(action[:3]))
         if a.min_step > 0 and 1e-9 < n < a.min_step:
             action[:3] *= a.min_step / n
 
         cmd = adapter.metric_action_to_maniskill(action)
-        cmd[6] = 1.0                      # gripper open; translation-only search
+        if not a.search_gripper:
+            cmd[6] = 1.0                  # gripper open; translation-only search
         obs, _, term, trunc, _ = env.step(cmd)
 
         tcp = obs_state(obs, env)[:3]

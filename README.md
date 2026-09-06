@@ -3,7 +3,7 @@
 Running Meta's action-conditioned world model as a planner in ManiSkill, on a
 6 GB laptop GPU.
 
-Status: **works after fine-tuning, end to end.** The pretrained model does not transfer to
+Status: **reaching works after fine-tuning; grasping does not.** The pretrained model does not transfer to
 ManiSkill zero-shot (action signal at chance), but fine-tuning the 305M AC
 predictor on 4k ManiSkill frames — encoder frozen — moves the true action from
 the 48th percentile to the 12th (p<0.0001, fresh seeds) and makes CEM planning
@@ -212,14 +212,61 @@ thirds of the gap on average, and the pretrained one actively diverges.
 > suggestive but underpowered. Same lesson as result 4: pick n before believing
 > a paired comparison.
 
+**7. Grasping does NOT work — and the reason is not what you would guess.**
+Extending to actual pick-and-place: `collect_grasp_data.py` builds 7,500 frames
+that genuinely contain grasps (113/250 episodes) by interpolating a scripted
+pick-and-place with noise, CEM was extended to search the gripper channel, and
+the predictor was fine-tuned again. Evaluated on real task outcomes:
+
+| mode | grasp rate | mean lift | PickCube success |
+|---|---|---|---|
+| random | 0.0% | 0.0000 m | 0.0% |
+| scripted (upper bound) | 100.0% | 0.1835 m | 83.3% |
+| pretrained + CEM | 0.0% | 0.0000 m | 0.0% |
+| **fine-tuned + CEM** | **0.0%** | **0.0000 m** | **0.0%** |
+
+Both planners are indistinguishable from random. The task is solvable in the
+allotted 30 steps — the scripted controller grasps 6/6 — so this is a planner
+failure, not an impossible task.
+
+`probe_grasp.py` then rules out the obvious explanation. Linear probes on the
+**frozen** encoder's cached latents, split by episode:
+
+| target | held-out |
+|---|---|
+| gripper closedness | R² = +0.730 |
+| `is_grasped` | **AUC = 0.952**, balanced accuracy 0.801 |
+
+So grasp state *is* clearly represented. The encoder is not blind to it.
+
+**The likely cause is the objective, not the representation.** Being decodable
+by a probe and being *salient in an L1 distance* are different things. A linear
+probe is free to find and amplify one small direction in 1408 dims; the planning
+cost weights all dimensions equally, so "cube held vs not" contributes a tiny
+fraction of a distance dominated by gross arm and cube position. Compounding
+this, planning ran at `rollout=1`: a greedy one-step planner cannot discover
+that closing the gripper *now* pays off several steps later. It simply drives
+the arm toward the goal image's arm position and never closes.
+
+That makes grasping a different problem from reaching, rather than a harder
+dose of the same one — reaching succeeded precisely because arm position is what
+dominates the latent distance.
+
 ## What to try next
 
 Roughly in order of expected value per unit effort:
 
 1. ~~Close the visual gap.~~ **Tested and ruled out** — see result 4.
-2. ~~Fine-tune the AC predictor.~~ **Done, and it worked** — see result 5.
-   Natural extensions: train all 305M params (needs >6 GB or 8-bit Adam), more
-   data, longer rollout horizons, and closed-loop task success.
+2. ~~Fine-tune the AC predictor.~~ **Done, worked for reaching** — result 5.
+3. ~~Grasping.~~ **Tried, does not work** — results 6-7. The informative next
+   steps follow from the diagnosis, in order:
+   a. **Longer horizon.** `rollout=1` cannot represent "close now, lift later".
+      Try `rollout=3-5`; costs linearly more compute per planning step.
+   b. **Reweight the objective.** Score with a cost that emphasises
+      grasp-relevant latent directions (the `probe_grasp.py` classifier gives
+      one directly) instead of uniform L1 over 1408 dims.
+   c. **Subgoals.** Give the planner intermediate goal images (above cube,
+      fingers around cube, lifted) rather than one final image.
 3. **Try the simulation-trained checkpoints.** `facebook/jepa-wms` also carries
    `jepa_wm_metaworld.pth.tar` (0.21 GB) and `dino_wm_metaworld.pth.tar`
    (0.28 GB), trained on sim rather than real footage. Different architecture,
@@ -247,6 +294,9 @@ Roughly in order of expected value per unit effort:
 | `finetune.py` | Fine-tune the AC predictor on cached latents. |
 | `eval_finetuned.py` | Paired pretrained-vs-fine-tuned test on fresh seeds. |
 | `eval_planning.py` | Closed-loop goal-reaching, pretrained vs fine-tuned. |
+| `collect_grasp_data.py` | Scripted-plus-noise dataset that actually contains grasps. |
+| `eval_grasp.py` | Real task outcomes: grasp rate, lift, PickCube success. |
+| `probe_grasp.py` | Is grasp state decodable from the frozen encoder? (yes) |
 | `cem_plan.py` | Closed-loop CEM planning. |
 
 ## Practical notes

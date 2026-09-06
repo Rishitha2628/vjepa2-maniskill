@@ -106,6 +106,8 @@ def main():
     ap.add_argument("--n-eval", type=int, default=48)
     ap.add_argument("--eval-chunk", type=int, default=32)
     ap.add_argument("--grad-checkpoint", action="store_true")
+    ap.add_argument("--init", default=None,
+                    help="warm-start from a previous fine-tune checkpoint")
     ap.add_argument("--out", default="predictor_ft.pt")
     a = ap.parse_args()
 
@@ -126,6 +128,11 @@ def main():
           f"({n_val} held-out episodes)")
 
     predictor = loader.load_predictor(device=device, dtype=torch.float32)
+    if a.init:
+        sd = torch.load(a.init, map_location="cpu")
+        predictor.load_state_dict({k: v.float() for k, v in sd.items()},
+                                  strict=False)
+        print(f"warm-started from {a.init} ({len(sd)} tensors)")
     if a.grad_checkpoint:
         predictor.use_activation_checkpointing = True
     named = trainable_params(predictor, a.trainable, a.top_blocks)
