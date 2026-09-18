@@ -3,7 +3,8 @@
 Running Meta's action-conditioned world model as a planner in ManiSkill, on a
 6 GB laptop GPU.
 
-Status: **reaching works after fine-tuning; grasping does not.** The pretrained model does not transfer to
+Status: **reaching works via world-model planning; grasping works via the
+encoder as a position sensor, not via the predictor.** The pretrained model does not transfer to
 ManiSkill zero-shot (action signal at chance), but fine-tuning the 305M AC
 predictor on 4k ManiSkill frames — encoder frozen — moves the true action from
 the 48th percentile to the 12th (p<0.0001, fresh seeds) and makes CEM planning
@@ -342,6 +343,70 @@ scripted-with-noise rollouts) or at the one-step latent objective itself, not at
 model scale — and it means "train a bigger model for longer" is not the route to
 centimetre-precision planning with this recipe.
 
+**10. Grasping works — but with the encoder as a sensor, not the predictor as a
+planner.** `state_planner.py` replaces latent-distance scoring with a decoded
+position cost: the world model still imagines each candidate's outcome, but
+those outcomes are scored in metres via a decoder read off the frozen encoder's
+features. That took the gripper from 14.8 cm to 4.2 cm — and still grasped 0/6.
+
+`servo_check.py` then removes the world model entirely: decode the
+gripper-to-cube offset from the current frame, move that way, re-measure, repeat.
+
+| method | grasp rate | closest approach | task success |
+|---|---|---|---|
+| world-model CEM (9 configurations) | 0% | 3.6–4.0 cm | 0% |
+| **decoded-position servo** | **100% (6/6)** | **2.4 cm** | 16.7% |
+
+Same decoder, same phases, same controller. The only difference is that the
+servo measures and the planner imagines.
+
+Note the task-success gap: it grasps reliably and then usually fails to lift and
+carry, so full PickCube is 16.7%, not 100%.
+
+**11. Why the planner cannot close the last 4 cm.** Nine configurations were
+tried — grasp-aware cost, horizon 3, subgoal images, a keypoint decoder
+(2.60 → 1.79 cm), finer step caps, an action-scale correction, bias correction,
+best-action execution instead of the elite mean, and a decoder retrained on
+near-cube poses (1.48 cm close-range error). Every one stalled at 3.6–4.0 cm.
+
+That invariance is the result. Stall distance versus close-range decoder error:
+
+| decoder close-range error | 2.60 cm | 1.79 cm | 1.48 cm |
+|---|---|---|---|
+| planner stall distance | 4.23 cm | 3.62 cm | 3.82 cm |
+
+Flat. Improving the estimate does not help, which rules out the readout. The
+mechanism is a signal-to-noise problem specific to *ranking*:
+
+- CEM scores candidates against **each other**. Candidates differ by at most
+  5 cm commanded, and `action_gain.py` measures the predictor's response gain at
+  **0.34** (which correctly matches the controller's own 0.40 — the predictor is
+  faithful, not broken). So candidates' **imagined** positions differ by ~1.7 cm.
+- Scoring requires decoding an **imagined** latent, which carries 1.5–2.3 cm of
+  error (`decoder_on_predicted.py`).
+- Signal ≈ noise, so near the target CEM cannot rank candidates and parks at a
+  fixed radius.
+
+The servo escapes this because its signal is the **entire remaining distance**
+(5–10 cm) read from a **real** latent (1.48 cm error) — roughly 5:1 instead of
+1:1. Improving the decoder shrinks the noise while the signal stays pinned at
+1.7 cm, which is exactly why the stall never moved.
+
+> **The general claim.** Latent world models can plan coarse motion, but at
+> contact precision the difference between candidate actions falls below the
+> noise of decoding imagined states. Closed-loop measurement wins not because
+> the model is wrong — it is measurably faithful — but because its
+> signal-to-noise *for ranking* is fundamentally worse.
+
+> **Six hypotheses died on the way here**: a do-nothing magnitude bias (the
+> planner moves at 0.047 m/step, near its cap), patch resolution being too coarse
+> (0.5 cm displacement already moves the latent 43% of a 16 cm one), step size,
+> predictor action gain, elite-mean averaging, and close-range decoder error
+> (whose 3.69 cm matched the stall exactly, and was coincidence). Each was killed
+> by a measurement. Several diagnostic scripts print a pass/fail verdict line
+> whose threshold turned out to be wrong for the case at hand — read the numbers,
+> not the verdict.
+
 ## What to try next
 
 Roughly in order of expected value per unit effort:
@@ -356,7 +421,10 @@ Roughly in order of expected value per unit effort:
    d. ~~Reduce prediction error by scaling.~~ **Tried** — result 9. All 305M
       params on 11.5k frames leaves val L1 at 0.1939, identical to 78M on 7.5k.
       Not a capacity or data-volume limit.
-   e. **What is actually left**, given results 8-9: the error floor is a
+   e. ~~Decoded-state cost, better decoders, subgoals.~~ **Tried** — results
+      10-11. Grasping works via servoing; world-model planning does not close
+      the last 4 cm, for a measured signal-to-noise reason.
+   f. **What is actually left**, given results 8-11: the error floor is a
       property of the objective and the data distribution, so change those.
       Multi-step rollout losses rather than one-step; on-policy data from the
       planner itself instead of random/scripted rollouts; or a different
@@ -398,6 +466,14 @@ Roughly in order of expected value per unit effort:
 | `probe_imagination.py` | Can the predictor imagine a grasp? (41% of it) |
 | `subgoal_plan.py` | Waypoint-based grasp planning. |
 | `latent_precision.py` | Latent L1 vs displacement -- the precision/error analysis. |
+| `latent_vs_task.py` | Does latent distance track task distance? (r=0.72, optimum 6 cm off) |
+| `fit_decoders.py` | Linear position decoders from frozen-encoder features. |
+| `fit_keypoint.py` | Spatial soft-argmax decoder; `--near` samples poses around the cube. |
+| `state_planner.py` | Planning with a decoded-position cost instead of latent L1. |
+| `servo_check.py` | Decoded-position servo, no world model -- grasps 6/6. |
+| `decoder_on_predicted.py` | Decoder accuracy on predicted vs real latents (bias vs scatter). |
+| `decoder_vs_range.py` | Decoder accuracy binned by distance to the cube. |
+| `action_gain.py` | Does imagining action `a` move the imagined gripper by `a`? (0.34) |
 | `cem_plan.py` | Closed-loop CEM planning. |
 
 ## Practical notes
