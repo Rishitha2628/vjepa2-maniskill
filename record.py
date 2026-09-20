@@ -35,14 +35,25 @@ import adapter
 CAMERAS = {
     "default": None,
     "close": dict(eye=[0.45, 0.30, 0.45], target=[-0.05, 0.0, 0.12], fov=1.0),
+    # Wrist camera: swaps in ManiSkill's panda_wristcam and reads `hand_camera`.
+    # The camera now MOVES WITH THE GRIPPER, so the whole image shifts when the
+    # arm moves -- egocentric rather than third-person dynamics. Anything trained
+    # on the fixed views above does not transfer and must be retrained.
+    "wrist": dict(robot="panda_wristcam", key="hand_camera"),
 }
+
+# Which camera key obs_frame() should read. set_camera() keeps this in sync so
+# the two dozen call sites of record.obs_frame(obs) need no changes.
+ACTIVE_CAM = "base_camera"
 
 
 def set_camera(preset):
     """Mutates ManiSkill's PickCube camera config. Must run before gym.make."""
+    global ACTIVE_CAM
     cfg = CAMERAS[preset]
-    if cfg is None:
-        return None
+    ACTIVE_CAM = cfg.get("key", "base_camera") if cfg else "base_camera"
+    if cfg is None or "eye" not in cfg:
+        return cfg
     from mani_skill.envs.tasks.tabletop.pick_cube import PICK_CUBE_CONFIGS
 
     PICK_CUBE_CONFIGS["panda"]["sensor_cam_eye_pos"] = cfg["eye"]
@@ -60,19 +71,27 @@ def make_env(task="PickCube-v1", res=256, seed=None, camera="default"):
     # would give 8-dim joint actions, which the predictor has no notion of.
     cfg = set_camera(camera)
     sensor_configs = dict(width=res, height=res)
+    kwargs = {}
     if cfg is not None:
-        sensor_configs["fov"] = cfg["fov"]
+        if "fov" in cfg:
+            sensor_configs["fov"] = cfg["fov"]
+        if "robot" in cfg:
+            kwargs["robot_uids"] = cfg["robot"]
     return gym.make(
         task,
         obs_mode="rgb",
         render_mode="rgb_array",
         control_mode="pd_ee_delta_pose",
         sensor_configs=sensor_configs,
+        **kwargs,
     )
 
 
-def obs_frame(obs, camera="base_camera"):
-    return to_np(obs["sensor_data"][camera]["rgb"][0])
+def obs_frame(obs, camera=None):
+    cam = camera or ACTIVE_CAM
+    if cam not in obs["sensor_data"]:
+        cam = next(iter(obs["sensor_data"]))
+    return to_np(obs["sensor_data"][cam]["rgb"][0])
 
 
 def obs_state(obs, env):

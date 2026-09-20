@@ -3,8 +3,9 @@
 Running Meta's action-conditioned world model as a planner in ManiSkill, on a
 6 GB laptop GPU.
 
-Status: **reaching works via world-model planning; grasping works via the
-encoder as a position sensor, not via the predictor.** The pretrained model does not transfer to
+Status: **reaching and grasping both work via world-model planning.** Grasping
+needed the search posed coarse-to-fine (probe large, execute small): 100% grasp
+rate, 1.31 cm approach, 66.7% PickCube success. The pretrained model does not transfer to
 ManiSkill zero-shot (action signal at chance), but fine-tuning the 305M AC
 predictor on 4k ManiSkill frames — encoder frozen — moves the true action from
 the 48th percentile to the 12th (p<0.0001, fresh seeds) and makes CEM planning
@@ -407,6 +408,70 @@ The servo escapes this because its signal is the **entire remaining distance**
 > whose threshold turned out to be wrong for the case at hand — read the numbers,
 > not the verdict.
 
+**12. Grasping DOES work with world-model planning — probe large, execute small.**
+Result 11 diagnosed the stall as signal-to-noise specific to *ranking*: CEM
+compares candidates whose imagined positions differ by ~1.7 cm against 1.5-2.3 cm
+of decode error. The trap was that one number set both the evaluation scale and
+the execution scale — small steps give precision but indistinguishable
+candidates, large steps distinguish them but overshoot. Nothing requires the two
+to be equal.
+
+`hier_plan.py` separates them. Candidates are evaluated as **12 cm probe
+displacements**, where imagined outcomes separate by ~4 cm — well clear of the
+noise — and only the winning **direction** is kept, executed as a 1.5 cm step,
+then re-planned.
+
+| method | grasp rate | closest approach | PickCube success |
+|---|---|---|---|
+| flat CEM (9 configurations) | 0% | 3.6–4.0 cm | 0% |
+| decoded-position servo (no world model) | 100% | 2.4 cm | 16.7% |
+| **hierarchical world-model planning** | **100%** | **1.31 cm** | **66.7%** |
+
+The world model does the choosing — it imagines every candidate's outcome. The
+change was not to the model, the decoder or the controller, but to **how the
+question was posed**. This is the coarse-to-fine idea from the literature
+(Coarse-to-Fine Q-attention, Subgoal Diffuser, Hierarchical World Models)
+arrived at from our own measurement.
+
+> **Scope.** The four phases (hover, descend, close, lift) are scripted, and the
+> final carry-to-goal phase servos on the simulator's tcp pose rather than a
+> decoded one — true of every method compared here, so the comparison is fair,
+> but the 66.7% is not end-to-end learned. The **grasp itself** — approach and
+> descend — is world-model planned from decoded positions.
+
+**13. A wrist camera makes planning worse, not better.** The obvious objection
+to all of the above is that a fixed third-person camera is the wrong sensor for
+grasping — ManiSkill ships `panda_wristcam`, where the cube fills much of the
+frame instead of spanning two or three patches. The whole pipeline was re-run on
+it: 7,500 wrist frames (114/250 episodes with grasps, matching the base run's
+113), predictor fine-tuned from scratch, decoder retrained, same planner.
+
+| | base camera | wrist camera |
+|---|---|---|
+| decoder error (perception) | 1.88 cm | **1.11 cm** |
+| val L1 (dynamics) | **0.203** | 0.407 |
+| action ranking `rank_shell` | **0.135** | 0.209 |
+| grasp rate | **100%** | 16.7% |
+| closest approach | **1.31 cm** | 3.12 cm |
+| PickCube success | **66.7%** | 0% |
+
+**Better sensor, worse dynamics, decisively worse planning.** A 41% more accurate
+decoder could not compensate for a 2x worse predictor, because CEM ranks
+candidates by decoding *imagined* futures — the two error sources compound
+rather than trade off.
+
+The cause is structural: with a wrist camera the camera **moves with the
+gripper**, so the entire image shifts whenever the arm moves. Egocentric
+dynamics are much harder to predict than watching an arm cross a static scene.
+Training showed this cleanly — val L1 was pinned at 0.407 across all four epochs
+while `rank_shell` fell steadily from 0.432 to 0.209, the two quantities
+diverging further than anywhere else in this project.
+
+> This retroactively explains a design choice in the paper: **V-JEPA 2-AC was
+> trained on third-person DROID footage, not wrist views.** A fixed viewpoint
+> keeps the prediction problem tractable, and for a planner that must rank
+> imagined futures, predictability beats resolution.
+
 ## What to try next
 
 Roughly in order of expected value per unit effort:
@@ -471,6 +536,7 @@ Roughly in order of expected value per unit effort:
 | `fit_keypoint.py` | Spatial soft-argmax decoder; `--near` samples poses around the cube. |
 | `state_planner.py` | Planning with a decoded-position cost instead of latent L1. |
 | `servo_check.py` | Decoded-position servo, no world model -- grasps 6/6. |
+| `hier_plan.py` | Coarse-to-fine planning: probe at 12 cm, execute 1.5 cm. **The one that works.** |
 | `decoder_on_predicted.py` | Decoder accuracy on predicted vs real latents (bias vs scatter). |
 | `decoder_vs_range.py` | Decoder accuracy binned by distance to the cube. |
 | `action_gain.py` | Does imagining action `a` move the imagined gripper by `a`? (0.34) |
