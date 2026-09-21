@@ -15,6 +15,26 @@ close ~2/3 of the distance to a goal image on 12/12 seeds (p=0.0003), where the
 pretrained model diverges. All numbers here were
 produced on this machine (RTX 3060 Laptop, 6 GB).
 
+## Results at a glance
+
+| task | method | result |
+|---|---|---|
+| Reaching | world-model planning (latent goal-matching) | **12/12 seeds**, p=0.0003 |
+| Grasping | encoder as position sensor + CEM, analytic dynamics | **100% grasp, 100% PickCube** |
+| Grasping | same, but with the V-JEPA predictor in the loop | 100% grasp, 83.3% PickCube |
+
+**Reaching is a world-model result. Grasping is not** — result 14 ablates the
+predictor and scores *better* without it, because decoding an imagined latent
+carries 2.33 cm of error versus 1.11 cm for a real one, and free-space
+translation needs no prediction at all.
+
+Camera ablations: a wrist camera sees better (1.11 cm vs 1.88 cm decoder) but
+predicts worse (val L1 0.407 vs 0.203) and plans worse (16.7% vs 100% grasp).
+Mounting one also degrades the third-person view, since the hardware sits on the
+gripper being tracked.
+
+Everything here ran on a 6 GB laptop GPU.
+
 ## Install
 
 Already satisfied on this machine. For a fresh one:
