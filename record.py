@@ -40,6 +40,12 @@ CAMERAS = {
     # arm moves -- egocentric rather than third-person dynamics. Anything trained
     # on the fixed views above does not transfer and must be retrained.
     "wrist": dict(robot="panda_wristcam", key="hand_camera"),
+    # Dual: the wristcam robot exposes BOTH base_camera and hand_camera, with the
+    # base camera posed exactly as in "close". Lets each camera do what it is good
+    # at -- the predictor plans on the stable third-person view (val L1 0.203),
+    # while the wrist view supplies the best close-range position readout (1.11 cm).
+    "dual": dict(robot="panda_wristcam", key="base_camera",
+                 eye=[0.45, 0.30, 0.45], target=[-0.05, 0.0, 0.12], fov=1.0),
 }
 
 # Which camera key obs_frame() should read. set_camera() keeps this in sync so

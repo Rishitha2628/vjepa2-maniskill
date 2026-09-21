@@ -3,9 +3,11 @@
 Running Meta's action-conditioned world model as a planner in ManiSkill, on a
 6 GB laptop GPU.
 
-Status: **reaching and grasping both work via world-model planning.** Grasping
-needed the search posed coarse-to-fine (probe large, execute small): 100% grasp
-rate, 1.31 cm approach, 66.7% PickCube success. The pretrained model does not transfer to
+Status: **reaching works via world-model planning. Grasping works, but NOT
+because of the world model** -- an ablation (result 14) shows the predictor can
+be removed with no loss and a gain: 100% grasp, 100% PickCube success without
+it, versus 83.3% with it. Grasping is the frozen encoder used as a position
+sensor plus CEM over a trivial analytic model. The pretrained model does not transfer to
 ManiSkill zero-shot (action signal at chance), but fine-tuning the 305M AC
 predictor on 4k ManiSkill frames — encoder frozen — moves the true action from
 the 48th percentile to the 12th (p<0.0001, fresh seeds) and makes CEM planning
@@ -472,6 +474,52 @@ diverging further than anywhere else in this project.
 > keeps the prediction problem tractable, and for a planner that must rank
 > imagined futures, predictability beats resolution.
 
+**14. ABLATION: the predictor is not what makes grasping work — and it hurts.**
+Results 12-13 claimed grasping as a world-model planning result. That claim does
+not survive its own control, which should have been run first.
+
+`hier_plan.py --ablate-predictor` replaces the world model with a trivial
+analytic stand-in -- commanding action `a` is assumed to change the
+gripper->cube offset by exactly `-a`, no prediction at all. Everything else is
+identical: same decoder, same cost, same CEM search, same probe/execute scales,
+same phases, same budgets, same seeds.
+
+| | grasp rate | closest approach | PickCube success |
+|---|---|---|---|
+| with the predictor | 100% | 1.31 cm | 83.3% |
+| **without the predictor** | **100%** | **0.34–1.55 cm** | **100% (6/6)** |
+
+Removing the world model **improves** every metric. Seed 4, which failed with the
+predictor, succeeds without it -- its approach error drops from 2.15 cm to
+1.24 cm.
+
+The mechanism is one this project had already measured and failed to follow
+through. Scoring a candidate two ways:
+
+    with predictor:   decode( predict(z, a) )   -> 2.33 cm error (imagined latent)
+    analytic:         decode(z) - a             -> 1.11 cm error (real latent) + exact arithmetic
+
+`decoder_on_predicted.py` showed decoding an *imagined* latent is strictly
+noisier than decoding a real one. For pure translation in free space, "commanding
+`a` moves you by `a`" is very nearly exact, so the predictor was injecting noise
+into a problem that needed no prediction at all.
+
+> **Corrected claim.** Grasping here is **not** world-model planning. It is
+> V-JEPA's frozen encoder used as a learned position sensor, plus CEM over a
+> trivial analytic model, plus a scripted phase controller. The predictor can be
+> deleted with no loss -- indeed with a gain.
+>
+> **Reaching remains a genuine world-model result** (results 5-6): it scores
+> candidates by latent goal-matching with no decoder in the loop, so the
+> predictor is doing the work there -- action ranking 0.4766 -> 0.1181
+> (p<0.0001) and 12/12 seeds closing ~2/3 of the distance to goal.
+
+> **The lesson.** This ablation was identified as necessary early and run late,
+> after three further experiments had been built on the unverified claim. The
+> diagnostics in results 8-11 were correct and in fact *predicted* this outcome;
+> they were simply not carried to their conclusion. Run the control that could
+> falsify your headline before building on it.
+
 ## What to try next
 
 Roughly in order of expected value per unit effort:
@@ -536,7 +584,7 @@ Roughly in order of expected value per unit effort:
 | `fit_keypoint.py` | Spatial soft-argmax decoder; `--near` samples poses around the cube. |
 | `state_planner.py` | Planning with a decoded-position cost instead of latent L1. |
 | `servo_check.py` | Decoded-position servo, no world model -- grasps 6/6. |
-| `hier_plan.py` | Coarse-to-fine planning: probe at 12 cm, execute 1.5 cm. **The one that works.** |
+| `hier_plan.py` | Coarse-to-fine planning: probe at 12 cm, execute 1.5 cm. `--ablate-predictor` runs it without the world model (which scores better). |
 | `decoder_on_predicted.py` | Decoder accuracy on predicted vs real latents (bias vs scatter). |
 | `decoder_vs_range.py` | Decoder accuracy binned by distance to the cube. |
 | `action_gain.py` | Does imagining action `a` move the imagined gripper by `a`? (0.34) |
