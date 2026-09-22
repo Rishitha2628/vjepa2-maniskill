@@ -94,20 +94,65 @@ Both conversions live in `adapter.py` and nowhere else. Verified against
 `vjepa2_src/notebooks/franka_example_traj.npz`, whose `states` are euler with a
 0–1 gripper closedness.
 
+## Watch it run
+
+```bash
+python3 -m vjepa.evaluate.visualize --seed 0
+```
+
+`media/grasp.mp4` is a recording of seed 0 solving PickCube: hover, descend,
+grasp, carry. Final state -- cube lifted 25.5 cm and placed 1.49 cm from the
+goal, against a 2.5 cm success threshold.
+
+## Repository layout
+
+```
+vjepa/
+├── core/        loader.py · adapter.py · record.py
+│                  model loading, ManiSkill<->DROID conversions, the simulator
+├── data/        collect_data.py · collect_grasp_data.py
+│                  roll episodes and cache encoder latents to disk
+├── train/       finetune.py · fit_decoders.py · fit_keypoint.py
+│                  fine-tune the predictor; fit position decoders
+├── plan/        cem_plan · hier_plan · state_planner · plan_grasp
+│                subgoal_plan · dual_plan · grasp_cost
+│                  planners, newest last; hier_plan.py is the one that works
+├── diagnose/    13 scripts, each answering one yes/no question
+│                  validate_reference · openloop · energy_maniskill
+│                  camera_ablation · probe_* · latent_* · action_gain
+│                  decoder_vs_range · decoder_on_predicted · servo_check
+└── evaluate/    eval_finetuned · eval_planning · eval_grasp · visualize
+
+checkpoints/   trained weights (.pt gitignored; small .npz probes kept)
+results/       every experiment's measurements as .npz
+media/         rendered frames and grasp.mp4
+datasets/      recorded trajectories (gitignored)
+logs/          run logs (gitignored)
+vjepa2_src/    Meta's source, fetched by setup.sh (gitignored)
+```
+
+Everything runs as a module from the repository root:
+
+```bash
+python3 -m vjepa.evaluate.visualize --seed 0      # watch it solve the task
+python3 -m vjepa.plan.hier_plan --seeds 6         # the planner
+python3 -m vjepa.diagnose.openloop --horizon 12   # a diagnostic
+```
+
 ## Run order
 
 ```bash
-python3 validate_reference.py      # 1  does the stack work at all?
-python3 record.py --steps 32       # 2  render + record a fixture trajectory
-python3 openloop.py --horizon 12   # 3  prediction error vs horizon
-python3 energy_maniskill.py        # 4  is there usable action signal?
-python3 camera_ablation.py         # 5  is the viewpoint the problem?
-python3 probe_reps.py              # 6  is the encoder the bottleneck? (no)
-python3 collect_data.py            # 7  cache 4k encoded frames  (~25 min)
-python3 finetune.py --epochs 4     # 8  fine-tune the predictor  (~30 min)
-python3 eval_finetuned.py          # 9  fresh-seed paired test
-python3 eval_planning.py           # 10  closed-loop goal reaching
-python3 cem_plan.py --ckpt predictor_ft.pt --steps 20   # 11  interactive planning
+python3 -m vjepa.diagnose.validate_reference      # 1  does the stack work at all?
+python3 -m vjepa.core.record --steps 32       # 2  render + record a fixture trajectory
+python3 -m vjepa.diagnose.openloop --horizon 12   # 3  prediction error vs horizon
+python3 -m vjepa.diagnose.energy_maniskill        # 4  is there usable action signal?
+python3 -m vjepa.diagnose.camera_ablation         # 5  is the viewpoint the problem?
+python3 -m vjepa.diagnose.probe_reps              # 6  is the encoder the bottleneck? (no)
+python3 -m vjepa.data.collect_data            # 7  cache 4k encoded frames  (~25 min)
+python3 -m vjepa.train.finetune --epochs 4     # 8  fine-tune the predictor  (~30 min)
+python3 -m vjepa.evaluate.eval_finetuned          # 9  fresh-seed paired test
+python3 -m vjepa.evaluate.eval_planning           # 10  closed-loop goal reaching
+python3 -m vjepa.plan.cem_plan --ckpt checkpoints/predictor_ft.pt --steps 20   # 11  interactive planning
 ```
 
 `validate_reference.py` runs entirely on upstream's own ground-truth Franka
@@ -372,7 +417,7 @@ position cost: the world model still imagines each candidate's outcome, but
 those outcomes are scored in metres via a decoder read off the frozen encoder's
 features. That took the gripper from 14.8 cm to 4.2 cm — and still grasped 0/6.
 
-`servo_check.py` then removes the world model entirely: decode the
+`vjepa/diagnose/servo_check.py` then removes the world model entirely: decode the
 gripper-to-cube offset from the current frame, move that way, re-measure, repeat.
 
 | method | grasp rate | closest approach | task success |
@@ -438,7 +483,7 @@ the execution scale — small steps give precision but indistinguishable
 candidates, large steps distinguish them but overshoot. Nothing requires the two
 to be equal.
 
-`hier_plan.py` separates them. Candidates are evaluated as **12 cm probe
+`vjepa/plan/hier_plan.py` separates them. Candidates are evaluated as **12 cm probe
 displacements**, where imagined outcomes separate by ~4 cm — well clear of the
 noise — and only the winning **direction** is kept, executed as a 1.5 cm step,
 then re-planned.
@@ -603,8 +648,8 @@ Roughly in order of expected value per unit effort:
 | `fit_decoders.py` | Linear position decoders from frozen-encoder features. |
 | `fit_keypoint.py` | Spatial soft-argmax decoder; `--near` samples poses around the cube. |
 | `state_planner.py` | Planning with a decoded-position cost instead of latent L1. |
-| `servo_check.py` | Decoded-position servo, no world model -- grasps 6/6. |
-| `hier_plan.py` | Coarse-to-fine planning: probe at 12 cm, execute 1.5 cm. `--ablate-predictor` runs it without the world model (which scores better). |
+| `vjepa/diagnose/servo_check.py` | Decoded-position servo, no world model -- grasps 6/6. |
+| `vjepa/plan/hier_plan.py` | Coarse-to-fine planning: probe at 12 cm, execute 1.5 cm. `--ablate-predictor` runs it without the world model (which scores better). |
 | `decoder_on_predicted.py` | Decoder accuracy on predicted vs real latents (bias vs scatter). |
 | `decoder_vs_range.py` | Decoder accuracy binned by distance to the cube. |
 | `action_gain.py` | Does imagining action `a` move the imagined gripper by `a`? (0.34) |
