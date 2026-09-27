@@ -20,7 +20,8 @@ produced on this machine (RTX 3060 Laptop, 6 GB).
 | task | method | result |
 |---|---|---|
 | Reaching | world-model planning (latent goal-matching) | **12/12 seeds**, p=0.0003 |
-| Grasping | encoder as position sensor + CEM, analytic dynamics | **100% grasp, 100% PickCube** |
+| Grasping | encoder as position sensor + CEM, analytic dynamics | **96.7% grasp, 100% PickCube** (30 seeds) |
+| Generalisation | same pipeline, 16 unseen YCB objects | **0%** -- the decoder is cube-specific |
 | Grasping | same, but with the V-JEPA predictor in the loop | 100% grasp, 83.3% PickCube |
 
 **Reaching is a world-model result. Grasping is not** — result 14 ablates the
@@ -585,6 +586,52 @@ into a problem that needed no prediction at all.
 > they were simply not carried to their conclusion. Run the control that could
 > falsify your headline before building on it.
 
+**15. Scaled-up evaluation, and it does NOT generalise to new objects.**
+Every grasping number above came from 6 seeds on one red cube, which is thin.
+Two follow-ups.
+
+*More seeds.* Rerunning the working configuration (coarse-to-fine, predictor
+ablated) on **30 seeds**:
+
+| | 6 seeds | 30 seeds |
+|---|---|---|
+| grasp rate | 100% | 96.7% |
+| PickCube success | 100% | **100%** |
+| closest approach | 0.0131 m | 0.0112 m |
+
+The headline holds at five times the evidence. (The 96.7% grasp against 100%
+success is a sampling artifact: on one seed `is_grasping` read false at the
+moments it was polled while the cube still reached the goal.)
+
+*New objects.* `eval_objects.py` runs the identical pipeline on
+`PickSingleYCB-v1` -- 16 episodes, 16 different YCB objects, nothing retrained.
+Two confounds are controlled: the task defaults to `panda_wristcam` (forced back
+to plain `panda`) and hardcodes a far camera (patched to the same `close` pose
+the decoder was trained on), so the only thing that varies is the object.
+
+| | red cube | 16 YCB objects |
+|---|---|---|
+| grasp rate | 96.7% | **0.0%** |
+| success | 100% | **0.0%** |
+| closest approach | 0.011 m | **0.278 m** |
+
+**Zero transfer** -- foam brick, clamp, baseball, knife, banana, spatula, lemon,
+lego, marbles, cups, all of it.
+
+The magnitude localises the failure. 27 cm is not "mislocated the banana
+slightly"; the planner is driving confidently to a meaningless position, which
+means the **decoder** emitted garbage. That is expected by construction: it was
+trained to regress the coordinates of *a red cube*. Corroborating detail -- the
+best of the 16 was `012_strawberry` at 0.10 cm closest approach, roughly 3x
+nearer than the rest, and the only small red object in the set. The decoder is
+keying on appearance, not on object-ness.
+
+> **What this does and does not show.** It shows the pipeline does not
+> generalise, and that the bottleneck is the position decoder in isolation --
+> the planner and world model never received a usable input, so they were not
+> really tested. The fix follows directly: a detector trained across many
+> objects generalises by construction where a cube-specific regressor cannot.
+
 ## What to try next
 
 Roughly in order of expected value per unit effort:
@@ -636,6 +683,9 @@ Roughly in order of expected value per unit effort:
 | `finetune.py` | Fine-tune the AC predictor on cached latents. |
 | `eval_finetuned.py` | Paired pretrained-vs-fine-tuned test on fresh seeds. |
 | `eval_planning.py` | Closed-loop goal-reaching, pretrained vs fine-tuned. |
+| `eval_objects.py` | Does it transfer to unseen YCB objects? (no -- 0/16) |
+| `visualize.py` | Watch a grasp; records `media/grasp.mp4`. |
+| `visualize_latent.py` | Renders predicted vs real latents as images. |
 | `collect_grasp_data.py` | Scripted-plus-noise dataset that actually contains grasps. |
 | `eval_grasp.py` | Real task outcomes: grasp rate, lift, PickCube success. |
 | `probe_grasp.py` | Is grasp state decodable from the frozen encoder? (yes) |
