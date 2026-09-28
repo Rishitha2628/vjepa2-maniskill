@@ -1,29 +1,7 @@
-"""
-Can the predictor IMAGINE a grasp?
+"""Applies the grasp probe to the predictor's imagined next latent at real grasp
+onsets, to test whether it can imagine contact. Includes a non-grasp control set.
 
-Planning with a grasp-aware cost still grasps 0/6. There is a failure mode that
-would explain that completely, and it sits upstream of any cost function:
-
-    if the predictor's imagined next latent never looks "grasped", then
-    P(grasped | z_pred) is low for EVERY candidate action, the grasp term is
-    constant, and re-weighting it changes nothing.
-
-This tests exactly that, on cached data with known grasp onsets. For each
-transition where the cube goes from not-held to held, compare the grasp probe's
-score on:
-
-    z_t        the real frame before the grasp          (should be low)
-    z_{t+1}    the real frame after the grasp           (should be high)
-    z_pred     the predictor's imagined next frame,
-               given the TRUE action that caused it     (the question)
-
-If z_pred tracks z_t instead of z_{t+1}, the predictor is not modelling the
-contact event, and the cost was never the bottleneck.
-
-A non-grasp control set is included so "scores rose" cannot be confused with
-"scores drift upward generally".
-
-    python3 probe_imagination.py
+    python3 -m vjepa.diagnose.probe_imagination
 """
 
 import argparse

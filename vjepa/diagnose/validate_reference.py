@@ -1,18 +1,8 @@
-"""
-Validates the whole model stack against upstream's own ground-truth data,
-before ManiSkill is involved at all.
+"""Validates the whole stack against Meta's own ground-truth Franka pair, before
+ManiSkill is involved: sweep candidate actions, imagine each, and check the
+argmin lands near the known true action. Run it first.
 
-Uses vjepa2_src/notebooks/franka_example_traj.npz -- two real Franka frames and
-their two poses. The action that connects them is known, so we can sweep a grid
-of candidate actions, ask the world model to imagine each one, and check that
-the imagined future closest to the real next frame is the one produced by
-(approximately) the true action.
-
-If the argmin of this landscape sits near the ground-truth action, then
-encode(), predict_next(), the normalization and the pose/action conventions are
-all correct. If it does not, nothing downstream can be trusted.
-
-    python3 validate_reference.py
+    python3 -m vjepa.diagnose.validate_reference
 """
 
 import os

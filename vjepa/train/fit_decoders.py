@@ -1,19 +1,7 @@
-"""
-Fit position decoders from frozen-encoder latents.
+"""Fits linear position decoders from frozen-encoder latents, so the planner can be
+scored in metres instead of latent L1. state_planner.py uses them as its cost.
 
-latent_vs_task.py showed why every grasp attempt stalls: the argmin of latent
-L1 sits ~6 cm from the true goal pose, so goal-image matching cannot servo to
-the ~2 cm a grasp needs, no matter how good the model or the search is.
-
-But probe_reps.py already showed the information is there -- the frozen encoder
-decodes arm position at R^2 0.956 and cube position at R^2 0.962. So the fix is
-not a better model, it is a better *readout*: decode positions from the latent
-and plan in metres, where the optimum is where we actually want it.
-
-This fits and saves those decoders. state_planner.py then uses them as the
-planning cost.
-
-    python3 fit_decoders.py --episodes 90 --steps 16
+    python3 -m vjepa.train.fit_decoders --episodes 90 --steps 16
 """
 
 import argparse

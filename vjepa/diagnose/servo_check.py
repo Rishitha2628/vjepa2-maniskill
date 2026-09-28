@@ -1,20 +1,7 @@
-"""
-Isolate which layer is failing: the decoded-state idea, or the planner on top.
+"""Grasps by servoing straight to the decoder's estimate, with no world model in the
+loop, as a control for the planner. Also reports commanded vs achieved motion.
 
-Everything measurable has been eliminated -- objective, decoder accuracy (2.33 cm
-even on predicted latents), step size, horizon, search, capacity, camera. Yet
-planning stalls 3.7 cm from the cube.
-
-So test the layer underneath. This drops the world model entirely and servos
-straight to the decoder's estimate: look at the frame, decode where the cube is
-relative to the gripper, move that way, repeat. If THIS grasps, the decoded-state
-readout is sound and the world-model planning layer is what fails. If it does not,
-the problem is below both -- the controller, the phase targets, or the geometry.
-
-Also reports commanded vs achieved motion, to check the controller actually
-executes small deltas rather than damping them away.
-
-    python3 servo_check.py
+    python3 -m vjepa.diagnose.servo_check
 """
 
 import numpy as np

@@ -1,23 +1,7 @@
-"""
-Does the grasp pipeline generalise beyond the one red cube?
-
-Every result so far is on a single 4 cm cube. The decoder was trained on that
-cube's positions, and the phase targets were tuned to its geometry. So the
-obvious question -- "does this work on anything else?" -- is currently
-unanswerable, which is weak for a 6-seed, one-object evaluation.
-
-This runs the identical pipeline on PickSingleYCB objects: banana, mustard
-bottle, drill, cans, boxes. Nothing is retrained. The point is to measure
-transfer, and degradation is a perfectly good result.
-
-Two confounds are controlled deliberately:
-
-  robot   PickSingleYCB defaults to panda_wristcam, whose gripper-mounted
-          camera degrades the base view (decoder 3.62 cm vs 1.88 cm, measured
-          in the wrist ablation). Forced back to plain `panda`.
-  camera  PickSingleYCB hardcodes the far default viewpoint. Patched to the
-          same `close` pose the decoder was trained on, so the only thing that
-          changes between this and the cube result is the OBJECT.
+"""Runs the identical grasp pipeline on PickSingleYCB objects with nothing
+retrained. Two confounds are controlled: the task defaults to panda_wristcam
+(forced back to plain panda) and hardcodes a far camera (patched to the close
+pose the decoder was trained on), so only the object varies.
 
     python3 -m vjepa.evaluate.eval_objects --objects 8 --seeds 2
 """

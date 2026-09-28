@@ -1,24 +1,8 @@
-"""
-Is latent L1 a usable proxy for task-space distance?
+"""Checks whether minimising latent L1 to a goal image also minimises physical
+distance to the goal pose, by sampling poses around the workspace and comparing
+the two.
 
-Planning moves the arm decisively (~0.047 m/step, near the 0.05 ceiling) yet
-ends ~0.11 m from the cube. So the planner is not stalling -- it is confidently
-going somewhere else. That implicates the thing every goal-image planner
-assumes: that minimising latent distance to a goal image also minimises
-physical distance to the goal pose.
-
-This measures that assumption directly. Park the gripper at many positions
-around the workspace, and for each compare
-
-    latent L1 (frame, goal_frame)      what the planner minimises
-    ||tcp - goal_tcp||                 what we actually want
-
-If these are strongly correlated, goal-image planning is sound and the fault is
-elsewhere. If they are weakly correlated, the objective itself is broken: the
-planner can drive latent distance down while moving away from the target, which
-is exactly the observed behaviour.
-
-    python3 latent_vs_task.py
+    python3 -m vjepa.diagnose.latent_vs_task
 """
 
 import numpy as np

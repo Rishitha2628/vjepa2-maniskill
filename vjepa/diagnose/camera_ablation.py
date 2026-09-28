@@ -1,25 +1,8 @@
-"""
-Does a DROID-like camera recover usable action signal on ManiSkill?
+"""Paired test of the default vs a DROID-like close camera. Both render the same
+executed trajectory, so only the pixels differ, and statistics are over seeds
+rather than timesteps.
 
-V-JEPA 2-AC was trained on DROID: a close third-person view where the gripper
-and the object fill much of the frame. ManiSkill's default `base_camera` is a
-wide-FOV view from 0.6 m up, leaving the cube a few pixels across. That is the
-most obvious confound behind the weak transfer in energy_maniskill.py, and it
-is cheap to test.
-
-The comparison is paired: for each seed both cameras render the SAME executed
-trajectory, so actions, states and dynamics are identical and only pixels differ.
-
-Statistics are computed over SEEDS, not timesteps. Timesteps inside one
-trajectory are strongly correlated, so treating them as independent samples
-inflates significance -- an earlier version of this analysis did exactly that
-and reported p=0.019 off a single trajectory.
-
-Metric: rank_shell, the percentile of the true action's energy among candidate
-actions of the same norm (0 = best, 0.5 = chance). Direction only; the
-magnitude prior is factored out by construction.
-
-    python3 camera_ablation.py --seeds 6 --steps 40
+    python3 -m vjepa.diagnose.camera_ablation --seeds 6 --steps 40
 """
 
 import argparse

@@ -1,18 +1,10 @@
-"""
-A spatial decoder for gripper->cube offset.
+"""A spatial soft-argmax decoder for the gripper-to-cube offset. It keeps the 16x16
+token grid instead of mean-pooling it: a linear scorer produces a heatmap per
+keypoint, a softmax over token positions makes it a distribution, and its
+expectation gives differentiable coordinates. `--near` samples poses around the
+cube, which is more accurate close in and worse far away.
 
-state_planner.py got the gripper to 4.2 cm (from 14.8 cm with latent L1), and
-stalled there because its decoder is only accurate to 2.6 cm. That decoder
-mean-pools all 256 tokens before a linear readout -- it averages away the 16x16
-spatial grid and then asks a linear map to recover position from it.
-
-This keeps the grid. A linear scorer produces one heatmap per keypoint, a
-softmax over the 256 token positions turns it into a spatial distribution, and
-its expectation is a differentiable soft-argmax -- a standard keypoint decoder,
-and the right inductive bias for "where is the gripper, where is the cube".
-A small head maps the keypoint coordinates to a metric 3D offset.
-
-    python3 fit_keypoint.py --episodes 160 --steps 16
+    python3 -m vjepa.train.fit_keypoint --episodes 160 --steps 16
 """
 
 import argparse

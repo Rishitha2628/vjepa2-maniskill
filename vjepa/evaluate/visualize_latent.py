@@ -1,21 +1,6 @@
-"""
-See what the model's prediction actually looks like.
-
-V-JEPA predicts in latent space and has no pixel decoder -- it never generates
-an image. That is the design, not a limitation: predicting features instead of
-pixels is what makes it cheap enough to run hundreds of times per planning step.
-
-But the latent is not shapeless. Each frame becomes a 16x16 grid of 1408-dim
-tokens, one per image patch, so it retains the image's spatial layout. Projecting
-those 1408 dims to 3 with PCA and showing them as RGB is the standard way ViT
-features are visualised -- patches with similar content get similar colours.
-
-Renders, per timestep:
-    frame t          what the model saw
-    frame t+1        what actually happened
-    latent t+1       PCA of the REAL next frame's tokens
-    PREDICTED t+1    PCA of the IMAGINED next frame -- the thing we never see
-    error            per-patch L1 between predicted and real
+"""Renders what the model predicts. V-JEPA has no pixel decoder, so each frame's
+16x16 grid of 1408-dim tokens is projected to RGB with PCA. Shows the real next
+frame, the imagined one, and the per-patch error between them.
 
     python3 -m vjepa.evaluate.visualize_latent
 """

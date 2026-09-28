@@ -1,18 +1,7 @@
-"""
-Can the world model plan an actual grasp?
+"""Real task outcomes for grasp planning: grasp rate, lift height and ManiSkill's
+own PickCube success flag, against random actions and a scripted upper bound.
 
-Measures real task outcomes, not latent-space proxies:
-
-    grasp rate   did the gripper ever actually hold the cube
-    lift         how far the cube rose off the table
-    success      ManiSkill's own PickCube success flag
-
-Baselines matter more here than in the reaching test, because grasping has a
-trap: a policy that drives the gripper down and closes it will sometimes grasp
-the cube by luck. So we compare against random actions, and against the
-scripted controller as an upper bound (it solves 8/8).
-
-    python3 eval_grasp.py --seeds 6 --steps 30
+    python3 -m vjepa.evaluate.eval_grasp --seeds 6 --steps 30
 """
 
 import argparse

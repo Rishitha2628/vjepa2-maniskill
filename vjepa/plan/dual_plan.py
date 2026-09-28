@@ -1,27 +1,8 @@
-"""
-Dual-camera grasping: plan on the base view, correct with the wrist view.
+"""Dual-camera grasping: the stable base view feeds the predictor, the wrist view is
+used only to measure the current offset close in. The wrist view never enters the
+planning loop, so its worse dynamics never matter.
 
-The wrist-camera ablation (result 13) swapped one camera for the other and lost:
-better perception (1.11 cm vs 1.88 cm) could not compensate for twice the
-prediction error, because CEM scores candidates by decoding IMAGINED futures.
-
-But `panda_wristcam` exposes both cameras at once, so the trade is avoidable.
-Each camera does what it is good at:
-
-    base_camera  -> the PREDICTOR. Stable third-person view, val L1 0.203,
-                    the dynamics CEM needs to rank candidates.
-    hand_camera  -> the DECODER. Best close-range readout, 1.11 cm, used only
-                    to MEASURE the current offset -- never to imagine one.
-
-The wrist view never enters the planning loop, so its bad dynamics never matter.
-It only supplies a short measured correction in the last steps before the
-gripper closes, where 1.11 cm beats 1.88 cm and nothing has to be predicted.
-
-Compared against hier_plan.py (base camera only): 100% grasp, 1.31 cm, 66.7%
-PickCube success. The open question is whether a better-centred grasp survives
-the lift -- 2 of 6 seeds there grasped the cube and then lost it.
-
-    python3 dual_plan.py --seeds 6
+    python3 -m vjepa.plan.dual_plan --seeds 6
 """
 
 import argparse

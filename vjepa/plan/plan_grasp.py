@@ -1,22 +1,7 @@
-"""
-Grasp planning with a grasp-aware cost and a multi-step horizon.
+"""Grasp planning with a grasp-aware cost and a multi-step horizon, so that closing
+the gripper now can be credited for paying off several steps later.
 
-Two changes from cem_plan.py, each following directly from probe_grasp.py's
-diagnosis that grasp state is well represented but invisible to the objective:
-
-1. COST. Plain L1 to the goal latent is dominated by gross arm/cube position.
-   Here the imagined rollout is also scored by a grasp classifier:
-
-       cost = L1(z_final, z_goal) - lam * max_h P(grasped | z_h)
-
-   The max over the horizon matters: it credits a sequence that achieves a
-   grasp partway through, instead of only judging the end state.
-
-2. HORIZON. rollout=1 is greedy and cannot represent "close the gripper now,
-   which pays off three steps later". Grasping is exactly that shape, so the
-   horizon has to be long enough to contain approach-close-lift.
-
-    python3 plan_grasp.py --seeds 6 --lam 0.5 --rollout 3
+    python3 -m vjepa.plan.plan_grasp --seeds 6 --lam 0.5 --rollout 3
 """
 
 import argparse

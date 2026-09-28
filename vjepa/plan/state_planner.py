@@ -1,26 +1,8 @@
-"""
-Grasp planning with a decoded-state cost instead of latent L1.
+"""Grasp planning with a decoded-state cost, `|| decode_offset(z_pred) - target ||`,
+instead of latent L1, whose optimum sits about 6 cm from the true goal pose. The
+world model still imagines each candidate; the phases are scripted.
 
-The blocking result was latent_vs_task.py: the argmin of latent L1 sits ~6 cm
-from the true goal pose, so goal-image matching cannot servo to the ~2 cm a
-grasp needs. That is a property of the objective, which is why better models,
-longer horizons, re-weighted costs and subgoals all failed to help.
-
-fit_decoders.py gives a better readout of the same latents: gripper->cube offset
-to ~2.6 cm, and gripper position to ~2.0 cm. So keep V-JEPA as the world model
--- it still imagines the future for each candidate action -- but score those
-imagined futures in metres:
-
-    cost = || decode_offset(z_predicted) - target_offset ||
-
-whose optimum is where we actually want it. The phases (approach, descend,
-close, lift) are scripted; the actions inside each phase are planned by the
-world model.
-
-Honest scope: this is not planning from a goal image. It is world-model planning
-against a decoded state objective, which is what the measurements say is needed.
-
-    python3 state_planner.py --seeds 6
+    python3 -m vjepa.plan.state_planner --seeds 6
 """
 
 import argparse

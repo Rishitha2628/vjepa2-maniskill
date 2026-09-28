@@ -1,26 +1,8 @@
-"""
-Does the frozen ViT-g encoder actually see ManiSkill?
+"""Ridge probe from the frozen encoder's features to ground-truth tcp and cube
+positions, with a shuffled-label control. Answers whether the encoder or the
+predictor is the bottleneck.
 
-Before fine-tuning the predictor it is worth knowing whether the encoder's
-representation contains the state at all. The predictor can only work with what
-the encoder gives it, and the encoder is frozen and trained on real video --
-ManiSkill renders are out of distribution for it.
-
-This fits a ridge regression from the (mean-pooled) frame representation to
-ground-truth positions and reports held-out R^2:
-
-    tcp   end-effector xyz
-    cube  cube xyz
-
-R^2 near 1 -> the state is linearly decodable; the reps are fine and a
-             predictor fine-tune is the right next step.
-R^2 near 0 -> the encoder is the bottleneck, not the predictor. Fine-tuning the
-             predictor on blind features cannot help.
-
-A shuffled-label control is included, because R^2 on a small sample with 1408
-features can look respectable purely by overfitting.
-
-    python3 probe_reps.py --episodes 40 --steps 16
+    python3 -m vjepa.diagnose.probe_reps --episodes 40 --steps 16
 """
 
 import argparse

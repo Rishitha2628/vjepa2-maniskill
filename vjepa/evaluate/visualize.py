@@ -1,12 +1,9 @@
-"""
-Watch the planner solve PickCube.
+"""Watch the planner solve PickCube. Runs the configuration that works,
+coarse-to-fine CEM over a decoded-position cost with the predictor ablated.
+Pass --predictor for the world-model version.
 
-Runs the configuration that actually works (result 14): coarse-to-fine CEM over
-a decoded-position cost, with the predictor ABLATED -- 100% grasp, 100% task
-success. Pass --predictor to watch the world-model version instead (83.3%).
-
-    python3 visualize.py --seed 0            # live window + video
-    python3 visualize.py --seed 0 --video-only
+    python3 -m vjepa.evaluate.visualize --seed 0
+    python3 -m vjepa.evaluate.visualize --seed 0 --video-only
 """
 
 import argparse

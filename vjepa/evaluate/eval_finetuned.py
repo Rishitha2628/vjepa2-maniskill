@@ -1,16 +1,7 @@
-"""
-Did fine-tuning actually help, or did it just fit the collection run?
+"""Paired pretrained vs fine-tuned test on fresh seeds, scoring both models on
+identical trajectories with statistics over seeds.
 
-finetune.py reports rank_shell on held-out EPISODES, but those episodes come
-from the same collection run, same camera and same action distribution as
-training. That is a weak form of held-out.
-
-This evaluates on entirely fresh seeds (training used 10000+, this uses 0..N)
-and computes statistics over SEEDS, not timesteps -- the correction that made
-the camera-ablation effect disappear. Pretrained and fine-tuned models are
-scored on the IDENTICAL trajectories, so the comparison is paired.
-
-    python3 eval_finetuned.py --seeds 8 --steps 40
+    python3 -m vjepa.evaluate.eval_finetuned --seeds 8 --steps 40
 """
 
 import argparse

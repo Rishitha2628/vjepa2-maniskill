@@ -1,19 +1,7 @@
-"""
-Is the decoder accurate CLOSE to the cube, where grasping happens?
+"""Bins decoder error by true gripper-to-cube distance, to see whether the headline
+accuracy holds close in where grasping happens.
 
-The stall radius sits at 3.6-4.0 cm no matter what changes in the planner. A
-constant floor like that points at the estimate, not the search -- and there is
-one property of the estimate nobody has checked.
-
-fit_keypoint trained on random arm motion, which rarely brings the gripper near
-the cube. Its headline 1.79 cm is therefore an average dominated by far poses.
-If accuracy collapses inside 5 cm, the planner drives to where it believes the
-target is and parks there, invariant to decoder quality elsewhere, step size,
-bias correction, horizon or elite averaging -- exactly what we observe.
-
-Bins decoder error by true gripper-to-cube distance.
-
-    python3 decoder_vs_range.py
+    python3 -m vjepa.diagnose.decoder_vs_range
 """
 
 import argparse

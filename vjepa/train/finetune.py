@@ -1,26 +1,10 @@
-"""
-Fine-tune the V-JEPA 2-AC predictor on ManiSkill.
+"""Fine-tune the V-JEPA 2-AC predictor on cached ManiSkill latents, on the model's
+own objective: L1 between the predicted next latent and the encoder's latent for
+the real next frame. The encoder is never loaded, which is what makes this fit in
+6 GB. Watch `rank_shell` rather than the loss, since the loss can fall while
+action ranking stays at chance.
 
-Motivated by probe_reps.py: the frozen ViT-g encoder decodes arm and cube
-position at R^2 ~ 0.96 on ManiSkill renders, so the scene information is
-present. What does not transfer is the action-conditioned dynamics on top of
-it -- which is the predictor, and only the predictor.
-
-Objective is the one the model was trained with: L1 between the predicted next
-latent and the encoder's latent for the real next frame, both layer-normed.
-
-Memory (6 GB card): the encoder is never loaded, latents are read from the
-memmap collect_data.py wrote, and by default only the conditioning pathway plus
-the top blocks are trained. `--trainable all` needs roughly 5 GB of optimizer
-state and will likely OOM here; it is left available for a bigger card.
-
-The metric that matters is not the loss but `rank_shell` -- the percentile of
-the true action's energy among same-norm candidates, the same statistic
-camera_ablation.py measured at chance (0.47) for the pretrained model. Loss can
-fall while rank_shell stays at chance, which would mean the model learned the
-scene's appearance and not its dynamics.
-
-    python3 finetune.py --epochs 4
+    python3 -m vjepa.train.finetune --epochs 4
 """
 
 import argparse

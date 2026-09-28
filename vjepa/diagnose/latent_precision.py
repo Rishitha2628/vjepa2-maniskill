@@ -1,20 +1,7 @@
-"""
-What spatial precision can latent L1 actually resolve?
+"""Measures latent L1 against controlled displacements, to find the smallest motion
+the representation can resolve.
 
-Every planning attempt stalls at 5-18 cm from the cube while a grasp needs
-<2 cm. Cost re-weighting, longer horizons and subgoals all failed to close that
-gap, which suggests a floor that is not about search at all.
-
-The encoder tokenises a 256px image into 16x16 patches, so one patch covers
-roughly 2-3 cm of table at this camera framing. Displacements below patch scale
-may simply not move the representation much, in which case no planner can
-servo to centimetre precision no matter how it searches.
-
-This measures it directly: park the gripper at a reference pose, capture its
-latent, then move it by a controlled offset and measure latent L1 back to the
-reference. If the curve is flat below ~5 cm, that is the precision ceiling.
-
-    python3 latent_precision.py
+    python3 -m vjepa.diagnose.latent_precision
 """
 
 import numpy as np

@@ -1,28 +1,7 @@
-"""
-Why did planned grasping fail?
+"""Linear probes on cached latents for gripper closedness, tcp-cube distance and
+is_grasped, to test whether the frozen encoder represents grasp state at all.
 
-eval_grasp.py: the fine-tuned world model grasps 0/6, same as random, while a
-scripted controller grasps 6/6. So the task is reachable and the planner is the
-problem. There are two candidate explanations and they imply opposite fixes:
-
-  A. The ENCODER cannot see grasp state. If "fingers around cube" and "fingers
-     beside cube" map to nearly the same latent, then no predictor and no
-     search can ever score a grasp, because the goal comparison is blind to it.
-     Fix: not fine-tuning -- you would need a different representation.
-
-  B. The encoder sees it but the PREDICTOR/planner cannot exploit it.
-     Fix: more/better data, longer horizon, better search.
-
-This distinguishes them with linear probes on the ALREADY-CACHED latents from
-collect_grasp_data.py, so it costs no simulation and no encoding:
-
-    gripper closedness   regression, R^2
-    tcp-cube distance    regression, R^2
-    is_grasped           classification, balanced accuracy + AUC
-
-If is_grasped is not decodable, explanation A holds.
-
-    python3 probe_grasp.py
+    python3 -m vjepa.diagnose.probe_grasp
 """
 
 import argparse

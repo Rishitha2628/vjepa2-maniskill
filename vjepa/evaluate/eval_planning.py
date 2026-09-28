@@ -1,22 +1,8 @@
-"""
-Closed-loop test: does the better action ranking translate into planning that
-actually moves toward the goal?
+"""Closed-loop reaching: build a goal image from a scripted rollout, reset, plan
+toward it with CEM, and measure how much distance was closed. Pretrained and
+fine-tuned run on identical goals and seeds.
 
-eval_finetuned.py shows the fine-tuned predictor ranks the true action in the
-top ~12% of candidates. That is a one-step, open-loop property. Planning is the
-thing we actually wanted, and it can still fail -- CEM compounds the model's
-errors over a horizon and feeds its own output back in.
-
-Protocol, per seed:
-  1. roll a scripted "goal" trajectory; its final frame is the goal image and
-     its final tcp position is the ground truth we measure against
-  2. reset to the same seed, plan with CEM toward that goal image
-  3. track ||tcp - goal_tcp|| over planning steps
-
-Reported: distance improvement (start - end). Positive = moved toward the goal.
-Pretrained and fine-tuned are run on identical goals and seeds.
-
-    python3 eval_planning.py --seeds 4 --steps 15
+    python3 -m vjepa.evaluate.eval_planning --seeds 4 --steps 15
 """
 
 import argparse

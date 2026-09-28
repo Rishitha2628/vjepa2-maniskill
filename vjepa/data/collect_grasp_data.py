@@ -1,23 +1,9 @@
-"""
-Collect a ManiSkill dataset that actually contains grasps.
+"""Same as collect_data.py but for episodes that actually contain grasps. Each
+episode interpolates a scripted pick-and-place with noise,
+`action = (1 - eps) * scripted + eps * noise`, so the dataset has near misses and
+premature closes as well as clean demonstrations.
 
-The random-action dataset in collect_data.py never grasps anything: closing the
-gripper in mid-air teaches the model nothing about contact. But pure scripted
-demonstrations are also wrong for planning -- CEM has to score BAD actions too,
-and a model that has only seen the correct trajectory has no idea what happens
-off it.
-
-So each episode interpolates between a scripted pick-and-place and random noise:
-
-    action = (1 - eps) * scripted + eps * noise
-
-with eps drawn per episode. eps=0 gives a clean demonstration, eps=1 gives pure
-flailing, and the middle is where the useful contrastive signal lives -- near
-misses, premature closes, knocked-over cubes.
-
-Records `grasped` per frame so the coverage can be checked rather than assumed.
-
-    python3 collect_grasp_data.py --episodes 250 --steps 30
+    python3 -m vjepa.data.collect_grasp_data --episodes 250 --steps 30
 """
 
 import argparse

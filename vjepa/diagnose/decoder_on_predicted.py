@@ -1,21 +1,7 @@
-"""
-How accurate is the decoder on the latents it is ACTUALLY applied to?
+"""Compares decoder accuracy on real encoder latents against imagined predictor
+latents, which is what the planner actually relies on.
 
-state_planner scores imagined futures by decoding a gripper->cube offset from
-the PREDICTOR's output. But every decoder here was fitted on the ENCODER's
-output. Those are different distributions -- probe_imagination.py already showed
-predicted latents score systematically lower on the grasp classifier than real
-ones.
-
-If the decoder degrades on predicted latents, the planner is aiming at a point
-that is systematically wrong, and it would stall short of the target no matter
-how good the search, the step size, or the decoder's accuracy on real frames.
-
-Measures both on the same fresh rollouts:
-    error on encoder latents   what fit_keypoint reported (1.79 cm)
-    error on predicted latents what the planner actually relies on
-
-    python3 decoder_on_predicted.py
+    python3 -m vjepa.diagnose.decoder_on_predicted
 """
 
 import numpy as np

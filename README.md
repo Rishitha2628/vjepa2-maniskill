@@ -1,721 +1,175 @@
 # V-JEPA 2-AC + ManiSkill
 
-Running Meta's action-conditioned world model as a planner in ManiSkill, on a
-6 GB laptop GPU.
+Using Meta's action-conditioned video world model to plan robot manipulation in
+simulation, on a laptop GPU.
 
-Status: **reaching works via world-model planning. Grasping works, but NOT
-because of the world model** -- an ablation (result 14) shows the predictor can
-be removed with no loss and a gain: 100% grasp, 100% PickCube success without
-it, versus 83.3% with it. Grasping is the frozen encoder used as a position
-sensor plus CEM over a trivial analytic model. The pretrained model does not transfer to
-ManiSkill zero-shot (action signal at chance), but fine-tuning the 305M AC
-predictor on 4k ManiSkill frames — encoder frozen — moves the true action from
-the 48th percentile to the 12th (p<0.0001, fresh seeds) and makes CEM planning
-close ~2/3 of the distance to a goal image on 12/12 seeds (p=0.0003), where the
-pretrained model diverges. All numbers here were
-produced on this machine (RTX 3060 Laptop, 6 GB).
+![a Panda arm picking up a red cube](media/grasp.gif)
 
-## Results at a glance
+I wanted to see whether V-JEPA 2-AC, which Meta trained on real robot video,
+works as a planner inside a simulator on my laptop (RTX 3060, 6 GB). There is no
+policy network anywhere in this project. Actions come from searching over
+imagined futures with CEM.
+
+## Results
 
 | task | method | result |
 |---|---|---|
-| Reaching | world-model planning (latent goal-matching) | **12/12 seeds**, p=0.0003 |
-| Grasping | encoder as position sensor + CEM, analytic dynamics | **96.7% grasp, 100% PickCube** (30 seeds) |
-| Generalisation | same pipeline, 16 unseen YCB objects | **0%** -- the decoder is cube-specific |
-| Grasping | same, but with the V-JEPA predictor in the loop | 100% grasp, 83.3% PickCube |
+| Reaching | world model plans in latent space | closes ~2/3 of the distance on **12/12 seeds**, p=0.0003 |
+| Grasping | encoder as a position sensor, analytic dynamics | **96.7% grasp, 100% PickCube** over 30 seeds |
+| Grasping | same, with the predictor in the loop | 100% grasp, 83.3% PickCube (6 seeds) |
+| New objects | same pipeline, 16 unseen YCB objects | **0%**, the position decoder is cube-specific |
 
-**Reaching is a world-model result. Grasping is not** — result 14 ablates the
-predictor and scores *better* without it, because decoding an imagined latent
-carries 2.33 cm of error versus 1.11 cm for a real one, and free-space
-translation needs no prediction at all.
+Four things I found:
 
-Camera ablations: a wrist camera sees better (1.11 cm vs 1.88 cm decoder) but
-predicts worse (val L1 0.407 vs 0.203) and plans worse (16.7% vs 100% grasp).
-Mounting one also degrades the third-person view, since the hardware sits on the
-gripper being tracked.
+The pretrained model does not transfer to simulation. Zero-shot on ManiSkill
+renders it cannot tell which action was taken, sitting at chance. Fine-tuning
+just the predictor (the encoder stays frozen) on 4,000 simulator frames moves the
+true action from the 48th percentile of candidates to the 12th, and that is what
+makes planning work.
 
-Everything here ran on a 6 GB laptop GPU.
+Reaching works using the world model. The fine-tuned model imagines each
+candidate action, compares the result to a goal image, and picks the best. It
+closes about two thirds of the distance on all 12 test seeds, while the
+pretrained model actively moves away.
+
+Grasping also works, but not because of the world model. When I removed the
+predictor and replaced it with one line of arithmetic (commanding action `a`
+moves you by `a`), it did slightly better: 100% success instead of 83.3%. So the
+grasping result comes from the encoder being a good position sensor, not from the
+predictor being a good dynamics model. Decoding a position out of an imagined
+latent carries 2.33 cm of error against 1.11 cm for a real one, and moving
+through free space needs no prediction anyway.
+
+It does not generalise to new objects. Running the identical pipeline on 16
+YCB objects gives 0% and a 27 cm miss, because the position decoder was trained
+to find a red cube and nothing else.
+
+![pretrained vs fine-tuned, action ranking and planning](media/finetune_effect.png)
+
+The [detailed results](RESULTS.md) have all 16 experiments, including the wrist
+camera comparison, the nine planner configurations that failed, and the language
+instruction work.
+
+## ManiSkill vs V-JEPA state format
+
+This cost me most of a day, so it is worth writing down. ManiSkill's
+`extra/tcp_pose` and V-JEPA 2-AC's `states` are both 7-dimensional, so they
+concatenate without any error and mean completely different things:
+
+| | layout |
+|---|---|
+| ManiSkill `tcp_pose` | `[x, y, z, qw, qx, qy, qz]`, a quaternion |
+| V-JEPA 2-AC `states` | `[x, y, z, roll, pitch, yaw, closedness]`, euler plus gripper |
+
+Actions have a second, separate mismatch. ManiSkill's `pd_ee_delta_pose` emits
+values in `[-1, 1]` that the controller scales to 0.1 m, while the predictor
+wants metric deltas and was trained on DROID at roughly 0.05 m or less. Feeding
+raw ManiSkill actions overstates every motion by about 10x at full scale.
+
+Both conversions live in `vjepa/core/adapter.py` and nowhere else, checked
+against `vjepa2_src/notebooks/franka_example_traj.npz`.
 
 ## Install
-
-Already satisfied on this machine. For a fresh one:
 
 ```bash
 pip install torch torchvision mani-skill transformers huggingface_hub timm einops scipy
 sudo apt install libvulkan1 libegl1 libgl1-mesa-dri   # headless rendering
-```
-
-Then fetch the upstream model source (not committed here — it is Meta's code
-under its own license):
-
-```bash
-./setup.sh          # clones facebookresearch/vjepa2 into vjepa2_src/
+./setup.sh    # clones facebookresearch/vjepa2 into vjepa2_src/
 ```
 
 Weights are pulled from Hugging Face on first use (5.27 GB) and cached in
 `~/.cache/huggingface`.
 
-**Not in this repo** (regenerate, or ask for them): `data/latents.npy` (2.9 GB
-of cached latents, rebuild with `collect_data.py`), `predictor_ft.pt` (294 MB
-of fine-tuned weights, rebuild with `finetune.py`), and the recorded
-`traj*.npz` trajectories. Everything needed to reproduce them is here; the
-small `*.npz` result files from each experiment are committed so the numbers in
-this README can be checked without rerunning anything.
+`torch.hub` does not work for this model. `src/hub/backbones.py` ships a debug
+value, `VJEPA_BASE_URL = "http://localhost:8300"`, so nothing downloads, and the
+real checkpoint is 11.76 GB because it carries optimizer state. `vjepa/core/loader.py`
+builds the model from the vendored source and loads the stripped 5.27 GB
+inference checkpoint from the `facebook/jepa-wms` mirror instead.
 
-## Why not torch.hub
+Not committed here: the cached latents (2.9 GB), the fine-tuned weights (294 MB)
+and the recorded trajectories. Everything needed to rebuild them is in the repo,
+and the small `.npz` result files are committed so every number above can be
+checked without rerunning anything.
 
-Two independent upstream problems, both verified:
+## Run
 
-1. `src/hub/backbones.py` ships a debug value: `VJEPA_BASE_URL =
-   "http://localhost:8300"`, with the real URL commented out. Nothing
-   downloads.
-2. The real checkpoint, `dl.fbaipublicfiles.com/vjepa2/vjepa2-ac-vitg.pt`, is
-   **11.76 GB** — it carries optimizer state and will not fit here.
-
-`loader.py` sidesteps both by building the model from the vendored source and
-loading the stripped 5.27 GB inference checkpoint `vjepa2_ac_oss.pth.tar` from
-the `facebook/jepa-wms` mirror.
-
-## The convention trap (the important part)
-
-ManiSkill's `extra/tcp_pose` and V-JEPA 2-AC's `states` are both 7-dimensional,
-so they concatenate without error and mean completely different things:
-
-| | layout |
-|---|---|
-| ManiSkill `tcp_pose` | `[x, y, z, qw, qx, qy, qz]` — quaternion |
-| V-JEPA 2-AC `states` | `[x, y, z, roll, pitch, yaw, closedness]` — euler + gripper |
-
-Actions have a second, independent mismatch: ManiSkill's `pd_ee_delta_pose`
-emits values in `[-1, 1]` that the controller scales to ±0.1 m, while the
-predictor wants **metric** deltas and was trained on DROID at |dxyz| ≲ 0.05 m.
-Feeding raw ManiSkill actions overstates every motion by ~10× at full scale.
-
-Both conversions live in `adapter.py` and nowhere else. Verified against
-`vjepa2_src/notebooks/franka_example_traj.npz`, whose `states` are euler with a
-0–1 gripper closedness.
-
-## Watch it run
+Everything runs as a module from the repository root.
 
 ```bash
-python3 -m vjepa.evaluate.visualize --seed 0
+python3 -m vjepa.evaluate.visualize --seed 0      # watch it solve PickCube
+python3 -m vjepa.plan.hier_plan --seeds 30        # the grasping planner
+python3 -m vjepa.plan.hier_plan --ablate-predictor --seeds 30   # without the world model
+python3 -m vjepa.evaluate.eval_planning           # reaching, pretrained vs fine-tuned
+python3 -m vjepa.evaluate.language_plan --demo    # language instructions
 ```
 
-`media/grasp.mp4` is a recording of seed 0 solving PickCube: hover, descend,
-grasp, carry. Final state -- cube lifted 25.5 cm and placed 1.49 cm from the
-goal, against a 2.5 cm success threshold.
+To rebuild from scratch:
 
-## Repository layout
+```bash
+python3 -m vjepa.diagnose.validate_reference   # does the stack work at all?
+python3 -m vjepa.data.collect_data             # cache 4k encoded frames, ~25 min
+python3 -m vjepa.train.finetune --epochs 4     # fine-tune the predictor, ~30 min
+python3 -m vjepa.train.fit_keypoint --near     # position decoder
+python3 -m vjepa.evaluate.eval_finetuned       # fresh-seed paired test
+```
+
+Run `validate_reference.py` first. It works entirely on Meta's own ground-truth
+Franka pair, so it separates "is the model wired up correctly" from "does it
+transfer". If it fails, nothing downstream means anything.
+
+## Layout
 
 ```
 vjepa/
-├── core/        loader.py · adapter.py · record.py
-│                  model loading, ManiSkill<->DROID conversions, the simulator
-├── data/        collect_data.py · collect_grasp_data.py
+├── core/        loader, adapter, record
+│                  model loading, ManiSkill <-> DROID conversions, the simulator
+├── data/        collect_data, collect_grasp_data
 │                  roll episodes and cache encoder latents to disk
-├── train/       finetune.py · fit_decoders.py · fit_keypoint.py
-│                  fine-tune the predictor; fit position decoders
-├── plan/        cem_plan · hier_plan · state_planner · plan_grasp
-│                subgoal_plan · dual_plan · grasp_cost
-│                  planners, newest last; hier_plan.py is the one that works
+├── train/       finetune, fit_decoders, fit_keypoint
+├── plan/        cem_plan, state_planner, subgoal_plan, plan_grasp, dual_plan,
+│                grasp_cost, hier_plan
+│                  newest last; hier_plan is the one that works
 ├── diagnose/    13 scripts, each answering one yes/no question
-│                  validate_reference · openloop · energy_maniskill
-│                  camera_ablation · probe_* · latent_* · action_gain
-│                  decoder_vs_range · decoder_on_predicted · servo_check
-└── evaluate/    eval_finetuned · eval_planning · eval_grasp · visualize
+└── evaluate/    eval_finetuned, eval_planning, eval_grasp, eval_objects,
+                 language_plan, language_goal, visualize
 
-checkpoints/   trained weights (.pt gitignored; small .npz probes kept)
+checkpoints/   trained weights (.pt gitignored, small .npz probes kept)
 results/       every experiment's measurements as .npz
-media/         rendered frames and grasp.mp4
-datasets/      recorded trajectories (gitignored)
-logs/          run logs (gitignored)
-vjepa2_src/    Meta's source, fetched by setup.sh (gitignored)
+media/         rendered frames, plots and grasp.mp4
 ```
 
-Everything runs as a module from the repository root:
-
-```bash
-python3 -m vjepa.evaluate.visualize --seed 0      # watch it solve the task
-python3 -m vjepa.plan.hier_plan --seeds 6         # the planner
-python3 -m vjepa.diagnose.openloop --horizon 12   # a diagnostic
-```
-
-## Run order
-
-```bash
-python3 -m vjepa.diagnose.validate_reference      # 1  does the stack work at all?
-python3 -m vjepa.core.record --steps 32       # 2  render + record a fixture trajectory
-python3 -m vjepa.diagnose.openloop --horizon 12   # 3  prediction error vs horizon
-python3 -m vjepa.diagnose.energy_maniskill        # 4  is there usable action signal?
-python3 -m vjepa.diagnose.camera_ablation         # 5  is the viewpoint the problem?
-python3 -m vjepa.diagnose.probe_reps              # 6  is the encoder the bottleneck? (no)
-python3 -m vjepa.data.collect_data            # 7  cache 4k encoded frames  (~25 min)
-python3 -m vjepa.train.finetune --epochs 4     # 8  fine-tune the predictor  (~30 min)
-python3 -m vjepa.evaluate.eval_finetuned          # 9  fresh-seed paired test
-python3 -m vjepa.evaluate.eval_planning           # 10  closed-loop goal reaching
-python3 -m vjepa.plan.cem_plan --ckpt checkpoints/predictor_ft.pt --steps 20   # 11  interactive planning
-```
-
-`validate_reference.py` runs entirely on upstream's own ground-truth Franka
-pair, so it isolates "is the model wired up correctly" from "does it transfer".
-Run it first; if it fails, nothing downstream means anything.
-
-## Results
-
-**1. The stack is correct.** On upstream's reference Franka pair, sweeping a
-7×7×7 grid of translation actions and scoring each imagined future against the
-real next frame:
-
-- true action `(+0.092, +0.031, +0.084)`, grid argmin `(+0.080, +0.080, +0.080)`
-- x and z hit the nearest grid point exactly; y is one step off
-- relative energy spread **0.163** — the landscape is far from flat
-- predicted-vs-true error **0.426** beats the static baseline **0.556** by +0.130,
-  and beats a zero-action prediction (0.480)
-
-So `encode()`, `predict_next()`, the layer-norm and the conventions are right.
-
-**2. Open-loop rollout on ManiSkill fails against a do-nothing baseline.**
-`openloop.py`, 12 steps, L1 in latent space:
-
-| | h=1 | h=6 | h=12 |
-|---|---|---|---|
-| true actions | 0.315 | 0.455 | 0.506 |
-| shuffled actions | 0.337 | 0.446 | 0.499 |
-| static (frame 0 vs frame h) | 0.126 | 0.302 | 0.387 |
-
-The shuffled-action gap is +0.023 at h=1 and collapses to **+0.001 on average**,
-going negative at several horizons. The static baseline wins everywhere by a
-wide margin. Compare with the reference pair above, where the model beat static
-by +0.130 — the yardstick is valid, so this is a genuine domain-transfer effect,
-not a metric artifact.
-
-**3. Why: a magnitude prior, not a direction signal.** A naive grid sweep on
-ManiSkill frames is misleading, because the argmin is the **zero action at every
-single timestep sampled** (`|argmin| = 0.0000` vs `|true| = 0.032`). The model's
-preferred prediction is "nothing moves". Separating magnitude from direction by
-scoring only candidates on the same-norm shell as the true action leaves a
-landscape with real structure (mean spread 0.154) that does not track the true
-direction.
-
-**4. The camera is not the explanation.** The obvious confound is viewpoint:
-DROID is a close third-person view, while ManiSkill's `base_camera` leaves the
-cube a few pixels across. `camera_ablation.py` tests this properly — for each
-seed both cameras render the *same* executed trajectory, so only pixels differ.
-
-| camera | mean `rank_shell` (n=6 seeds) | vs chance |
-|---|---|---|
-| default | 0.4649 ± 0.0548 | p=0.55 |
-| close (DROID-like) | 0.4836 ± 0.0320 | p=0.63 |
-| paired difference | +0.0186 | p=0.61 |
-
-**Neither camera beats chance, and the close view is very slightly worse.**
-Per-seed values range 0.30–0.63: the variance between trajectories dwarfs any
-camera effect.
-
-> **A caution worth keeping.** An earlier version of this analysis pooled
-> timesteps *within a single trajectory* and reported the close camera at
-> `rank_shell` 0.386, p=0.019 — apparently significant. That was an artifact:
-> timesteps inside one rollout are strongly correlated, so treating them as
-> independent samples inflates n and manufactures significance. Computing the
-> statistic over seeds instead makes the effect vanish (p=0.61). If you rerun
-> any of this, keep seeds as the unit of analysis.
-
-So the transfer failure is *not* explained by viewpoint, and the honest summary
-is that V-JEPA 2-AC's energy landscape carries **no measurable action signal on
-ManiSkill renders**, while carrying a clear one on DROID frames (result 1).
-
-**5. Fine-tuning the predictor fixes it.** Two findings make this the right
-intervention rather than a guess:
-
-- `probe_reps.py`: a ridge probe from the **frozen** encoder's features decodes
-  arm position at R² = **0.956** and cube position at R² = **0.962**
-  (shuffled-label controls ≈ −1.0). The encoder is not the bottleneck — the
-  scene state is fully present in its representation.
-- So what fails is the action-conditioned dynamics on top of it, i.e. the
-  predictor, and only the predictor.
-
-`collect_data.py` caches 4,000 encoded ManiSkill frames (200 episodes), and
-`finetune.py` trains the conditioning pathway plus the top 6 blocks (78M of
-305M params) on the model's own objective — L1 to the encoder's next-frame
-latent. The encoder is never loaded during training, which is what makes this
-fit in 6 GB.
-
-| epoch | train L1 | val L1 | rank_shell |
-|---|---|---|---|
-| before | — | — | 0.4427 |
-| 1 | 0.21913 | 0.21293 | 0.3898 |
-| 2 | 0.20583 | 0.20854 | 0.3537 |
-| 3 | 0.20064 | 0.20382 | 0.1667 |
-| 4 | 0.19581 | 0.20043 | **0.1159** |
-
-`eval_finetuned.py` then re-tests on **fresh seeds** (training used 10000+,
-evaluation uses 0–7), scoring both models on identical trajectories with
-statistics over seeds:
-
-| | mean `rank_shell` (n=8 seeds) | vs chance |
-|---|---|---|
-| pretrained | 0.4766 ± 0.0291 | p=0.45 — chance |
-| fine-tuned | **0.1181 ± 0.0198** | **p<0.0001** |
-| paired difference | **−0.3585** | **p<0.0001** |
-
-All 8/8 seeds improved and the distributions do not overlap (worst fine-tuned
-seed 0.228 beats best pretrained seed 0.341). Unlike the camera effect in
-result 4, this survives the seed-level correction comfortably.
-
-**6. Closed-loop planning works.** Ranking actions well one step ahead does not
-guarantee planning works — CEM feeds the model its own predictions back over a
-horizon, which is exactly where result 2 showed error compounding. So this is
-tested directly. `eval_planning.py` builds a goal image by rolling a scripted
-reach, resets, plans toward that image with CEM, and measures how much closer
-the end-effector gets. Both models plan on identical goals and seeds.
-
-| | mean distance improvement (n=12 seeds) | vs zero | closes distance on |
-|---|---|---|---|
-| pretrained | −0.0600 ± 0.0232 m | p=0.025 (moves *away*) | 3/12 seeds |
-| fine-tuned | **+0.1021 ± 0.0102 m** | **p<0.0001** | **12/12 seeds** |
-| paired difference | **+0.1621 m** | **p=0.0003** | favours FT on 11/12 |
-
-Starting distance is ~0.15 m, so the fine-tuned planner closes roughly two
-thirds of the gap on average, and the pretrained one actively diverges.
-
-> An n=4 version of this run gave the same effect size (+0.1622 m) at p=0.12 —
-> suggestive but underpowered. Same lesson as result 4: pick n before believing
-> a paired comparison.
-
-**7. Grasping does NOT work — and the reason is not what you would guess.**
-Extending to actual pick-and-place: `collect_grasp_data.py` builds 7,500 frames
-that genuinely contain grasps (113/250 episodes) by interpolating a scripted
-pick-and-place with noise, CEM was extended to search the gripper channel, and
-the predictor was fine-tuned again. Evaluated on real task outcomes:
-
-| mode | grasp rate | mean lift | PickCube success |
-|---|---|---|---|
-| random | 0.0% | 0.0000 m | 0.0% |
-| scripted (upper bound) | 100.0% | 0.1835 m | 83.3% |
-| pretrained + CEM | 0.0% | 0.0000 m | 0.0% |
-| **fine-tuned + CEM** | **0.0%** | **0.0000 m** | **0.0%** |
-
-Both planners are indistinguishable from random. The task is solvable in the
-allotted 30 steps — the scripted controller grasps 6/6 — so this is a planner
-failure, not an impossible task.
-
-`probe_grasp.py` then rules out the obvious explanation. Linear probes on the
-**frozen** encoder's cached latents, split by episode:
-
-| target | held-out |
-|---|---|
-| gripper closedness | R² = +0.730 |
-| `is_grasped` | **AUC = 0.952**, balanced accuracy 0.801 |
-
-So grasp state *is* clearly represented. The encoder is not blind to it.
-
-**The likely cause is the objective, not the representation.** Being decodable
-by a probe and being *salient in an L1 distance* are different things. A linear
-probe is free to find and amplify one small direction in 1408 dims; the planning
-cost weights all dimensions equally, so "cube held vs not" contributes a tiny
-fraction of a distance dominated by gross arm and cube position. Compounding
-this, planning ran at `rollout=1`: a greedy one-step planner cannot discover
-that closing the gripper *now* pays off several steps later. It simply drives
-the arm toward the goal image's arm position and never closes.
-
-That makes grasping a different problem from reaching, rather than a harder
-dose of the same one — reaching succeeded precisely because arm position is what
-dominates the latent distance.
-
-**8. Why grasping fails: the model's prediction error swamps the planning
-signal.** Three fixes were tried and all failed, and the diagnosis only became
-clear by ruling them out in order.
-
-*Fix 1 — grasp-aware cost and a longer horizon* (`grasp_cost.py`,
-`plan_grasp.py`). Score rollouts with
-`L1(z_final, z_goal) - lam * max_h P(grasped | z_h)` at `rollout=3`:
-
-| lam | grasp | lift | success |
-|---|---|---|---|
-| 0.0 | 0.0% | 0.0000 m | 0.0% |
-| 0.5 | 0.0% | 0.0000 m | 0.0% |
-| 2.0 | 0.0% | 0.0000 m | 0.0% |
-
-*Is the predictor able to imagine a grasp at all?* (`probe_imagination.py`)
-Partly — it reproduces **41%** of the real grasp signal, so "it cannot imagine
-contact" is refuted. (This also exposed a calibration bug worth noting: the
-probe is fitted on *encoder* latents but applied to *predictor* latents, which
-sit in a different region — predicted scores run ~0.15 low.)
-
-*Where does the gripper actually end up?* The decisive measurement: the planner
-stalls **0.148 m** from the cube, and a grasp needs <0.02 m. It never approaches
-the object at all. The single goal image shows the arm at the goal *holding* the
-cube, and latent L1 to that image is minimised by flying straight to the goal
-position. Picking the cube up is a **detour** that temporarily increases
-distance, so greedy goal-matching provably will not do it.
-
-*Fix 2 — subgoal images* (`subgoal_plan.py`): four waypoints (above cube, at
-cube, closed, carried). This halves the gap — closest approach **0.148 → 0.106 m**,
-best seed 0.058 m — confirming the shortcut diagnosis, but still grasps 0/6.
-
-*Fix 3 — is the latent too coarse to servo?* (`latent_precision.py`) **No, and
-this is the answer.** Measuring latent L1 against controlled displacements:
-
-| offset | latent L1 | % of 16 cm |
-|---|---|---|
-| 0.5 cm | 0.193 | 42.8% |
-| 2 cm | 0.281 | 62.5% |
-| 4 cm | 0.337 | 75.0% |
-| 16 cm | 0.450 | 100% |
-
-The latent is highly sensitive — 0.5 cm already gives 43% of a 16 cm response —
-but the response **saturates**. Any displacement immediately costs ~0.19, after
-which distinguishing 2 cm from 4 cm is worth only **0.056**.
-
-Set that against the model's own one-step prediction error, **0.194** (val L1,
-result 5). *The prediction error is ~3.5x larger than the difference the planner
-must resolve.* CEM is optimising noise.
-
-This explains the whole arc coherently. Reaching works because 10-15 cm motions
-produce latent differences (~0.45) far above the error floor. Grasping fails
-because centimetre positioning produces differences (~0.05) far below it. The
-limit is not representation, not the cost function and not the search — it is
-the **accuracy of the world model relative to the precision the task demands**.
-
-The actionable consequence: to grasp, prediction error has to drop below ~0.05,
-roughly a 4x improvement. More ManiSkill data, training all 305M params rather
-than 78M, or a shorter effective horizon are the levers. Cost re-weighting and
-better search are not.
-
-**9. Full-parameter training improves action ranking but NOT prediction error.**
-Result 8 identified prediction error (~0.194) as the thing gating grasping, with
-a target of ~0.05. The obvious lever is capacity and data, so: all 305M params
-(vs 78M), both datasets merged (11,500 frames vs 7,500), bitsandbytes Adam8bit
-plus gradient checkpointing to fit in 6 GB, lr 5e-5.
-
-| run | trainable | frames | val L1 | rank_shell |
-|---|---|---|---|---|
-| reach fine-tune | 78M | 4,000 | 0.2004 | 0.1159 |
-| grasp fine-tune | 78M | 7,500 | 0.1939 | 0.1354 |
-| full, epoch 1 | 305M | 11,500 | 0.2034 | 0.1098 |
-| full, epoch 2 | 305M | 11,500 | 0.1969 | 0.0959 |
-| full, epoch 3 | 305M | 11,500 | **0.1939** | **0.0833** |
-
-Two quantities move in opposite ways, and the distinction is the point:
-
-- **Action ranking improves substantially** — 0.1354 to **0.0833**, the best of
-  any run. More capacity and more data genuinely help the model tell good
-  actions from bad ones one step ahead.
-- **Prediction error does not move at all.** Val L1 lands on **0.1939** — within
-  0.0000 of where the 4x-smaller model on 65% of the data plateaued. Per-epoch
-  decrements halve (−0.0065, −0.0030), so the asymptote is ~0.19, not 0.05.
-
-So the ~0.19 error floor is **not a capacity limit and not a dataset-size
-limit**. Quadrupling parameters and nearly tripling data left it unchanged to
-four decimal places. That points at the data *distribution* (random and
-scripted-with-noise rollouts) or at the one-step latent objective itself, not at
-model scale — and it means "train a bigger model for longer" is not the route to
-centimetre-precision planning with this recipe.
-
-**10. Grasping works — but with the encoder as a sensor, not the predictor as a
-planner.** `state_planner.py` replaces latent-distance scoring with a decoded
-position cost: the world model still imagines each candidate's outcome, but
-those outcomes are scored in metres via a decoder read off the frozen encoder's
-features. That took the gripper from 14.8 cm to 4.2 cm — and still grasped 0/6.
-
-`vjepa/diagnose/servo_check.py` then removes the world model entirely: decode the
-gripper-to-cube offset from the current frame, move that way, re-measure, repeat.
-
-| method | grasp rate | closest approach | task success |
-|---|---|---|---|
-| world-model CEM (9 configurations) | 0% | 3.6–4.0 cm | 0% |
-| **decoded-position servo** | **100% (6/6)** | **2.4 cm** | 16.7% |
-
-Same decoder, same phases, same controller. The only difference is that the
-servo measures and the planner imagines.
-
-Note the task-success gap: it grasps reliably and then usually fails to lift and
-carry, so full PickCube is 16.7%, not 100%.
-
-**11. Why the planner cannot close the last 4 cm.** Nine configurations were
-tried — grasp-aware cost, horizon 3, subgoal images, a keypoint decoder
-(2.60 → 1.79 cm), finer step caps, an action-scale correction, bias correction,
-best-action execution instead of the elite mean, and a decoder retrained on
-near-cube poses (1.48 cm close-range error). Every one stalled at 3.6–4.0 cm.
-
-That invariance is the result. Stall distance versus close-range decoder error:
-
-| decoder close-range error | 2.60 cm | 1.79 cm | 1.48 cm |
-|---|---|---|---|
-| planner stall distance | 4.23 cm | 3.62 cm | 3.82 cm |
-
-Flat. Improving the estimate does not help, which rules out the readout. The
-mechanism is a signal-to-noise problem specific to *ranking*:
-
-- CEM scores candidates against **each other**. Candidates differ by at most
-  5 cm commanded, and `action_gain.py` measures the predictor's response gain at
-  **0.34** (which correctly matches the controller's own 0.40 — the predictor is
-  faithful, not broken). So candidates' **imagined** positions differ by ~1.7 cm.
-- Scoring requires decoding an **imagined** latent, which carries 1.5–2.3 cm of
-  error (`decoder_on_predicted.py`).
-- Signal ≈ noise, so near the target CEM cannot rank candidates and parks at a
-  fixed radius.
-
-The servo escapes this because its signal is the **entire remaining distance**
-(5–10 cm) read from a **real** latent (1.48 cm error) — roughly 5:1 instead of
-1:1. Improving the decoder shrinks the noise while the signal stays pinned at
-1.7 cm, which is exactly why the stall never moved.
-
-> **The general claim.** Latent world models can plan coarse motion, but at
-> contact precision the difference between candidate actions falls below the
-> noise of decoding imagined states. Closed-loop measurement wins not because
-> the model is wrong — it is measurably faithful — but because its
-> signal-to-noise *for ranking* is fundamentally worse.
-
-> **Six hypotheses died on the way here**: a do-nothing magnitude bias (the
-> planner moves at 0.047 m/step, near its cap), patch resolution being too coarse
-> (0.5 cm displacement already moves the latent 43% of a 16 cm one), step size,
-> predictor action gain, elite-mean averaging, and close-range decoder error
-> (whose 3.69 cm matched the stall exactly, and was coincidence). Each was killed
-> by a measurement. Several diagnostic scripts print a pass/fail verdict line
-> whose threshold turned out to be wrong for the case at hand — read the numbers,
-> not the verdict.
-
-**12. Grasping DOES work with world-model planning — probe large, execute small.**
-Result 11 diagnosed the stall as signal-to-noise specific to *ranking*: CEM
-compares candidates whose imagined positions differ by ~1.7 cm against 1.5-2.3 cm
-of decode error. The trap was that one number set both the evaluation scale and
-the execution scale — small steps give precision but indistinguishable
-candidates, large steps distinguish them but overshoot. Nothing requires the two
-to be equal.
-
-`vjepa/plan/hier_plan.py` separates them. Candidates are evaluated as **12 cm probe
-displacements**, where imagined outcomes separate by ~4 cm — well clear of the
-noise — and only the winning **direction** is kept, executed as a 1.5 cm step,
-then re-planned.
-
-| method | grasp rate | closest approach | PickCube success |
-|---|---|---|---|
-| flat CEM (9 configurations) | 0% | 3.6–4.0 cm | 0% |
-| decoded-position servo (no world model) | 100% | 2.4 cm | 16.7% |
-| **hierarchical world-model planning** | **100%** | **1.31 cm** | **66.7%** |
-
-The world model does the choosing — it imagines every candidate's outcome. The
-change was not to the model, the decoder or the controller, but to **how the
-question was posed**. This is the coarse-to-fine idea from the literature
-(Coarse-to-Fine Q-attention, Subgoal Diffuser, Hierarchical World Models)
-arrived at from our own measurement.
-
-> **Scope.** The four phases (hover, descend, close, lift) are scripted, and the
-> final carry-to-goal phase servos on the simulator's tcp pose rather than a
-> decoded one — true of every method compared here, so the comparison is fair,
-> but the 66.7% is not end-to-end learned. The **grasp itself** — approach and
-> descend — is world-model planned from decoded positions.
-
-**13. A wrist camera makes planning worse, not better.** The obvious objection
-to all of the above is that a fixed third-person camera is the wrong sensor for
-grasping — ManiSkill ships `panda_wristcam`, where the cube fills much of the
-frame instead of spanning two or three patches. The whole pipeline was re-run on
-it: 7,500 wrist frames (114/250 episodes with grasps, matching the base run's
-113), predictor fine-tuned from scratch, decoder retrained, same planner.
-
-| | base camera | wrist camera |
-|---|---|---|
-| decoder error (perception) | 1.88 cm | **1.11 cm** |
-| val L1 (dynamics) | **0.203** | 0.407 |
-| action ranking `rank_shell` | **0.135** | 0.209 |
-| grasp rate | **100%** | 16.7% |
-| closest approach | **1.31 cm** | 3.12 cm |
-| PickCube success | **66.7%** | 0% |
-
-**Better sensor, worse dynamics, decisively worse planning.** A 41% more accurate
-decoder could not compensate for a 2x worse predictor, because CEM ranks
-candidates by decoding *imagined* futures — the two error sources compound
-rather than trade off.
-
-The cause is structural: with a wrist camera the camera **moves with the
-gripper**, so the entire image shifts whenever the arm moves. Egocentric
-dynamics are much harder to predict than watching an arm cross a static scene.
-Training showed this cleanly — val L1 was pinned at 0.407 across all four epochs
-while `rank_shell` fell steadily from 0.432 to 0.209, the two quantities
-diverging further than anywhere else in this project.
-
-> This retroactively explains a design choice in the paper: **V-JEPA 2-AC was
-> trained on third-person DROID footage, not wrist views.** A fixed viewpoint
-> keeps the prediction problem tractable, and for a planner that must rank
-> imagined futures, predictability beats resolution.
-
-**14. ABLATION: the predictor is not what makes grasping work — and it hurts.**
-Results 12-13 claimed grasping as a world-model planning result. That claim does
-not survive its own control, which should have been run first.
-
-`hier_plan.py --ablate-predictor` replaces the world model with a trivial
-analytic stand-in -- commanding action `a` is assumed to change the
-gripper->cube offset by exactly `-a`, no prediction at all. Everything else is
-identical: same decoder, same cost, same CEM search, same probe/execute scales,
-same phases, same budgets, same seeds.
-
-| | grasp rate | closest approach | PickCube success |
-|---|---|---|---|
-| with the predictor | 100% | 1.31 cm | 83.3% |
-| **without the predictor** | **100%** | **0.34–1.55 cm** | **100% (6/6)** |
-
-Removing the world model **improves** every metric. Seed 4, which failed with the
-predictor, succeeds without it -- its approach error drops from 2.15 cm to
-1.24 cm.
-
-The mechanism is one this project had already measured and failed to follow
-through. Scoring a candidate two ways:
-
-    with predictor:   decode( predict(z, a) )   -> 2.33 cm error (imagined latent)
-    analytic:         decode(z) - a             -> 1.11 cm error (real latent) + exact arithmetic
-
-`decoder_on_predicted.py` showed decoding an *imagined* latent is strictly
-noisier than decoding a real one. For pure translation in free space, "commanding
-`a` moves you by `a`" is very nearly exact, so the predictor was injecting noise
-into a problem that needed no prediction at all.
-
-> **Corrected claim.** Grasping here is **not** world-model planning. It is
-> V-JEPA's frozen encoder used as a learned position sensor, plus CEM over a
-> trivial analytic model, plus a scripted phase controller. The predictor can be
-> deleted with no loss -- indeed with a gain.
->
-> **Reaching remains a genuine world-model result** (results 5-6): it scores
-> candidates by latent goal-matching with no decoder in the loop, so the
-> predictor is doing the work there -- action ranking 0.4766 -> 0.1181
-> (p<0.0001) and 12/12 seeds closing ~2/3 of the distance to goal.
-
-> **The lesson.** This ablation was identified as necessary early and run late,
-> after three further experiments had been built on the unverified claim. The
-> diagnostics in results 8-11 were correct and in fact *predicted* this outcome;
-> they were simply not carried to their conclusion. Run the control that could
-> falsify your headline before building on it.
-
-**15. Scaled-up evaluation, and it does NOT generalise to new objects.**
-Every grasping number above came from 6 seeds on one red cube, which is thin.
-Two follow-ups.
-
-*More seeds.* Rerunning the working configuration (coarse-to-fine, predictor
-ablated) on **30 seeds**:
-
-| | 6 seeds | 30 seeds |
-|---|---|---|
-| grasp rate | 100% | 96.7% |
-| PickCube success | 100% | **100%** |
-| closest approach | 0.0131 m | 0.0112 m |
-
-The headline holds at five times the evidence. (The 96.7% grasp against 100%
-success is a sampling artifact: on one seed `is_grasping` read false at the
-moments it was polled while the cube still reached the goal.)
-
-*New objects.* `eval_objects.py` runs the identical pipeline on
-`PickSingleYCB-v1` -- 16 episodes, 16 different YCB objects, nothing retrained.
-Two confounds are controlled: the task defaults to `panda_wristcam` (forced back
-to plain `panda`) and hardcodes a far camera (patched to the same `close` pose
-the decoder was trained on), so the only thing that varies is the object.
-
-| | red cube | 16 YCB objects |
-|---|---|---|
-| grasp rate | 96.7% | **0.0%** |
-| success | 100% | **0.0%** |
-| closest approach | 0.011 m | **0.278 m** |
-
-**Zero transfer** -- foam brick, clamp, baseball, knife, banana, spatula, lemon,
-lego, marbles, cups, all of it.
-
-The magnitude localises the failure. 27 cm is not "mislocated the banana
-slightly"; the planner is driving confidently to a meaningless position, which
-means the **decoder** emitted garbage. That is expected by construction: it was
-trained to regress the coordinates of *a red cube*. Corroborating detail -- the
-best of the 16 was `012_strawberry` at 0.10 cm closest approach, roughly 3x
-nearer than the rest, and the only small red object in the set. The decoder is
-keying on appearance, not on object-ness.
-
-> **What this does and does not show.** It shows the pipeline does not
-> generalise, and that the bottleneck is the position decoder in isolation --
-> the planner and world model never received a usable input, so they were not
-> really tested. The fix follows directly: a detector trained across many
-> objects generalises by construction where a cube-specific regressor cannot.
-
-## What to try next
-
-Roughly in order of expected value per unit effort:
-
-1. ~~Close the visual gap.~~ **Tested and ruled out** — see result 4.
-2. ~~Fine-tune the AC predictor.~~ **Done, worked for reaching** — result 5.
-3. ~~Grasping.~~ **Tried, does not work** — results 6-7. The informative next
-   steps follow from the diagnosis, in order:
-   a. ~~Longer horizon.~~ Tried (`rollout=3`), no effect.
-   b. ~~Reweight the objective.~~ Tried (lam 0/0.5/2.0), no effect.
-   c. ~~Subgoals.~~ Tried; halves the approach gap but still 0/6.
-   d. ~~Reduce prediction error by scaling.~~ **Tried** — result 9. All 305M
-      params on 11.5k frames leaves val L1 at 0.1939, identical to 78M on 7.5k.
-      Not a capacity or data-volume limit.
-   e. ~~Decoded-state cost, better decoders, subgoals.~~ **Tried** — results
-      10-11. Grasping works via servoing; world-model planning does not close
-      the last 4 cm, for a measured signal-to-noise reason.
-   f. **What is actually left**, given results 8-11: the error floor is a
-      property of the objective and the data distribution, so change those.
-      Multi-step rollout losses rather than one-step; on-policy data from the
-      planner itself instead of random/scripted rollouts; or a different
-      prediction target. Alternatively accept that latent-space CEM is the wrong
-      tool for contact-precision tasks and pair the world model with a policy
-      that handles the final centimetres.
-3. **Try the simulation-trained checkpoints.** `facebook/jepa-wms` also carries
-   `jepa_wm_metaworld.pth.tar` (0.21 GB) and `dino_wm_metaworld.pth.tar`
-   (0.28 GB), trained on sim rather than real footage. Different architecture,
-   so they need their own loading path, but they are small and the real-to-sim
-   gap is exactly the hypothesis they test.
-4. **Report the whole arc.** Items 2–3 may not work either. "V-JEPA
-   2-AC does not zero-shot transfer to ManiSkill renders; the energy landscape
-   is a magnitude prior with no measurable directional signal, and viewpoint is
-   not the cause" is a complete finding. The magnitude/direction decomposition
-   and the seed-level camera ablation are the parts nobody bothers to produce.
-
-## Files
-
-| file | role |
-|---|---|
-| `adapter.py` | ManiSkill ↔ DROID conventions. The trap above lives here. |
-| `loader.py` | Build + load the model, `encode()`, `predict_next()`. |
-| `validate_reference.py` | Ground-truth check against upstream's own data. |
-| `record.py` | Record a fixture trajectory in DROID conventions. |
-| `openloop.py` | Prediction error vs horizon, with shuffled + static controls. |
-| `energy_maniskill.py` | Magnitude-vs-direction decomposition of the energy landscape. |
-| `camera_ablation.py` | Paired default-vs-DROID-like camera test, statistics over seeds. |
-| `probe_reps.py` | Linear probe: is the state decodable from frozen encoder feats? |
-| `collect_data.py` | Cache encoded ManiSkill rollouts for training. |
-| `finetune.py` | Fine-tune the AC predictor on cached latents. |
-| `eval_finetuned.py` | Paired pretrained-vs-fine-tuned test on fresh seeds. |
-| `eval_planning.py` | Closed-loop goal-reaching, pretrained vs fine-tuned. |
-| `eval_objects.py` | Does it transfer to unseen YCB objects? (no -- 0/16) |
-| `visualize.py` | Watch a grasp; records `media/grasp.mp4`. |
-| `visualize_latent.py` | Renders predicted vs real latents as images. |
-| `collect_grasp_data.py` | Scripted-plus-noise dataset that actually contains grasps. |
-| `eval_grasp.py` | Real task outcomes: grasp rate, lift, PickCube success. |
-| `probe_grasp.py` | Is grasp state decodable from the frozen encoder? (yes) |
-| `grasp_cost.py` | Grasp classifier reused as a planning cost term. |
-| `plan_grasp.py` | Grasp-aware CEM with a multi-step horizon. |
-| `probe_imagination.py` | Can the predictor imagine a grasp? (41% of it) |
-| `subgoal_plan.py` | Waypoint-based grasp planning. |
-| `latent_precision.py` | Latent L1 vs displacement -- the precision/error analysis. |
-| `latent_vs_task.py` | Does latent distance track task distance? (r=0.72, optimum 6 cm off) |
-| `fit_decoders.py` | Linear position decoders from frozen-encoder features. |
-| `fit_keypoint.py` | Spatial soft-argmax decoder; `--near` samples poses around the cube. |
-| `state_planner.py` | Planning with a decoded-position cost instead of latent L1. |
-| `vjepa/diagnose/servo_check.py` | Decoded-position servo, no world model -- grasps 6/6. |
-| `vjepa/plan/hier_plan.py` | Coarse-to-fine planning: probe at 12 cm, execute 1.5 cm. `--ablate-predictor` runs it without the world model (which scores better). |
-| `decoder_on_predicted.py` | Decoder accuracy on predicted vs real latents (bias vs scatter). |
-| `decoder_vs_range.py` | Decoder accuracy binned by distance to the cube. |
-| `action_gain.py` | Does imagining action `a` move the imagined gripper by `a`? (0.34) |
-| `cem_plan.py` | Closed-loop CEM planning. |
-
-## Practical notes
-
-- **Disk is the binding constraint**, not VRAM: the checkpoint is 5.27 GB and
-  this machine has ~2 GB free after it. Do not also download
-  `vjepa2_ac_droid.pth.tar` without freeing space first.
-- Weights load in fp16 (2.65 GB VRAM); peak during these experiments was 2.68 GB.
-- The predictor's RoPE builds its angles in fp32 while values stay fp16, which
-  makes `scaled_dot_product_attention` reject the mismatch. `loader._autocast`
-  reconciles this; it is why every forward runs under `torch.autocast`.
-- Building the encoder on the meta device fails — `VisionTransformer.__init__`
-  calls `.item()`. `loader.py` builds directly in fp16 instead to keep host RAM
-  near 5 GB rather than 10 GB.
-- If you OOM in CEM, lower `--chunk` first (it does not change results), then
-  `--samples`, then `--rollout`.
+## What I would try next
+
+- Train with a multi-step rollout loss instead of the one-step latent objective.
+  Result 9 shows the 0.19 prediction error floor is not a capacity or data-volume
+  limit, so the objective is the suspect.
+- Collect on-policy data from the planner itself rather than random and scripted
+  rollouts, for the same reason.
+- Swap the cube-specific position decoder for an object detector, which is the
+  direct fix for the 0% YCB result.
+- Try the simulation-trained checkpoints. `facebook/jepa-wms` also has
+  `jepa_wm_metaworld.pth.tar` (0.21 GB) and `dino_wm_metaworld.pth.tar`
+  (0.28 GB), which are small and test the real-to-sim gap directly.
+
+## Notes from doing this
+
+- Disk space was a bigger problem than GPU memory. The checkpoint is 5.27 GB and
+  my laptop had about 2 GB free after downloading it.
+- Weights load in fp16 and use 2.65 GB of VRAM. Peak across all of these
+  experiments was 2.68 GB, so the 6 GB card was never the limit.
+- The thing that surprised me most was the ablation in result 14. I had already
+  measured every number needed to predict that removing the predictor would help,
+  three experiments before I actually ran the control.
+- The bug that cost me the most time was in the carry phase, not the model. The
+  cube hangs about 2.4 cm below the tool point, so I was servoing the gripper when
+  I should have been servoing the cube, and every earlier success had been
+  passing by roughly a millimetre.
+- Several of my diagnostic scripts print a pass or fail verdict whose threshold
+  turned out to be wrong for the case at hand. `servo_check.py` printed "cannot
+  close the gap" while grasping 6 out of 6. Read the numbers, not the verdict.
+- Two things about the model that will waste your time: its RoPE builds angles in
+  fp32 while the values stay fp16, which makes `scaled_dot_product_attention`
+  reject the mismatch (every forward runs under `torch.autocast` because of this),
+  and building the encoder on the meta device fails because
+  `VisionTransformer.__init__` calls `.item()`.
+- If you hit OOM in CEM, lower `--chunk` first. It does not change the results.

@@ -1,23 +1,8 @@
-"""
-A grasp-aware planning cost.
+"""A grasp-aware planning cost, `L1(z_pred, z_goal) - lam * P(grasped | z_pred)`,
+which puts the grasp probe back into the objective at a scale I control. `fit`
+trains the probe on cached latents; GraspScorer applies it inside CEM.
 
-probe_grasp.py showed the frozen encoder represents grasp state well
-(is_grasped AUC 0.952), yet planning with plain L1 to a goal latent grasps 0/6.
-Those are consistent: a linear probe may amplify one direction out of 1408,
-while L1 weights every dimension equally, so "cube held" is negligible next to
-gross arm and cube position.
-
-The fix is to put the probe back into the cost:
-
-    cost = L1(z_pred, z_goal) - lam * P(grasped | z_pred)
-
-so the planner gets credit for imagined futures in which the cube is actually
-held, at a scale we control rather than one the metric happens to give.
-
-`fit` trains the probe on the cached latents and stores it; `GraspScorer`
-applies it to predicted latents inside CEM.
-
-    python3 grasp_cost.py --fit
+    python3 -m vjepa.plan.grasp_cost --fit
 """
 
 import argparse

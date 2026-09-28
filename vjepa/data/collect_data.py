@@ -1,18 +1,8 @@
-"""
-Collect a ManiSkill dataset for fine-tuning the AC predictor.
+"""Rolls random ManiSkill episodes and caches the frozen encoder's output to a
+float16 memmap, so fine-tuning never has to load ViT-giant. Writes
+data/latents.npy and data/meta.npz.
 
-The encoder stays frozen, so its output is computed ONCE here and cached. That
-is the whole reason fine-tuning fits on a 6 GB card: training never loads
-ViT-giant at all, only the 305M predictor.
-
-Latents are written to a float16 memmap (256 tokens x 1408 dims = 720 KB per
-frame), so the dataset never has to fit in RAM.
-
-Outputs:
-    data/latents.npy   (N, 256, 1408) float16 memmap, layer-normed
-    data/meta.npz      actions, states, episode ids, frame index
-
-    python3 collect_data.py --episodes 200 --steps 20
+    python3 -m vjepa.data.collect_data --episodes 200 --steps 20
 """
 
 import argparse

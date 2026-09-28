@@ -1,19 +1,9 @@
-"""
-Closed-loop CEM planning in ManiSkill using V-JEPA 2-AC as the dynamics model.
+"""Closed-loop CEM planning with V-JEPA 2-AC as the dynamics model, scoring actions
+purely by latent distance to a goal. No reward and no policy. `--min-step`
+projects the planned action out to a minimum norm, because the energy landscape
+otherwise converges to zero motion. Defaults follow the upstream MPC config.
 
-No reward function and no policy: actions are scored purely by how close the
-imagined next latent lands to a goal latent.
-
-Read energy_maniskill.py's output before trusting anything here. On ManiSkill
-renders the energy landscape is dominated by a magnitude prior -- the
-lowest-energy action is "don't move" -- so CEM will happily converge to zero
-motion. `--min-step` exists for that reason: it projects the planned action out
-to a minimum norm so the arm commits to a direction instead of stalling.
-
-Defaults follow the upstream MPC config (notebooks/utils/mpc_utils.py):
-rollout 2, maxnorm 0.05 m, momentum on both mean and std.
-
-    python3 cem_plan.py --steps 20 --rollout 1 --samples 64
+    python3 -m vjepa.plan.cem_plan --steps 20 --rollout 1 --samples 64
 """
 
 import argparse

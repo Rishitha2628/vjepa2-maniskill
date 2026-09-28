@@ -1,34 +1,8 @@
-"""
-Grasping via subgoal images.
+"""Grasping via four subgoal images (above the cube, at it, closed on it, carried),
+each of which is a reaching problem. The subgoal images come from a scripted
+rollout, so the planner is given the phase structure but not the actions.
 
-reach_precision showed the real failure: planning to a single FINAL goal image
-leaves the gripper ~15 cm from the cube (a grasp needs <2 cm). That is not a bug
-in the planner -- it is the planner working correctly on a bad objective. The
-goal image shows the arm at the goal position holding the cube, and latent L1 to
-that image is minimised by flying straight there. Picking the cube up requires a
-DETOUR that temporarily increases distance to the goal, so greedy goal-matching
-will never do it.
-
-The fix is to stop asking for one shortcut-able goal and give the planner a
-sequence of subgoal images, each of which IS a reaching problem:
-
-    1  gripper above the cube
-    2  gripper down at the cube
-    3  gripper closed on the cube
-    4  cube carried to the goal
-
-Reaching is the thing that already works (0.4766 -> 0.1181 action ranking,
-12/12 seeds closing ~2/3 of the distance), so this converts a task the planner
-cannot express into four it can.
-
-What this does and does not claim: the subgoal IMAGES come from a scripted
-rollout, so the planner is given the phase structure of the task. It is not
-given the actions -- it still has to work out how to achieve each subgoal by
-imagining outcomes with the world model. That is standard hierarchical
-goal-conditioned planning, and it is a weaker claim than end-to-end planning
-from a single goal image, which result 8 shows does not work.
-
-    python3 subgoal_plan.py --seeds 6
+    python3 -m vjepa.plan.subgoal_plan --seeds 6
 """
 
 import argparse

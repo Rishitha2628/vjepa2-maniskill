@@ -1,26 +1,8 @@
-"""
-Does the predictor faithfully propagate SMALL actions?
+"""Measures the predictor's response gain: command a known displacement, decode
+where it thinks the gripper went, and divide. 1.0 means faithful imagination,
+0 means the action is ignored.
 
-Every fix aimed at the planner has failed: better decoder (2.60 -> 1.79 cm),
-finer steps, action-scale correction, bias correction, shorter horizon, more
-samples. It sits at ~3.6 cm while a servo using the same decoder reaches 2.4 cm
-and grasps 6/6. So the difference is not the readout -- it is what the predictor
-does with a candidate action.
-
-CEM only works if imagining action `a` moves the imagined gripper by roughly what
-`a` commands. If the predictor under-responds at small scales, then every
-candidate decodes to nearly the same place, the scores are nearly equal, and CEM
-has no gradient to follow -- it wanders and parks at a fixed radius. That would
-explain a stall no fix to the cost or the search could ever touch.
-
-This measures the gain directly: command a known displacement, decode where the
-predictor thinks the gripper went, and compare.
-
-    gain = (decoded movement) / (commanded movement)
-
-gain ~1 means the imagination is faithful. gain ~0 means it ignores the action.
-
-    python3 action_gain.py
+    python3 -m vjepa.diagnose.action_gain
 """
 
 import numpy as np

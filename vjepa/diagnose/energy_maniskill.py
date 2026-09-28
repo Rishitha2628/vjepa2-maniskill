@@ -1,24 +1,8 @@
-"""
-Does the world model carry usable action signal on ManiSkill frames?
+"""Splits the energy landscape into a magnitude part and a direction part, since a
+plain grid sweep is dominated by the model's preference for "don't move".
+Reports cos_shell and rank_shell among same-norm candidates.
 
-openloop.py shows absolute prediction error in ManiSkill is high and saturates.
-But absolute error is not what a planner consumes: CEM only compares candidate
-actions against each other at the same timestep.
-
-A naive grid sweep is misleading here, because the energy landscape has a strong
-MAGNITUDE bias -- the lowest-energy action is almost always "don't move", which
-swamps any directional preference. So this measures the two effects separately:
-
-  magnitude bias : norm of the grid argmin vs norm of the true action
-  direction      : among candidates of the SAME norm as the true action, does
-                   the true direction score well?
-
-Directional metrics (the ones that decide whether CEM can work):
-  cos_shell   cosine between best-on-shell direction and true direction
-  rank_shell  percentile of the true direction among same-norm candidates
-              (0 = best, 0.5 = chance)
-
-    python3 energy_maniskill.py --frames 8
+    python3 -m vjepa.diagnose.energy_maniskill --frames 8
 """
 
 import argparse

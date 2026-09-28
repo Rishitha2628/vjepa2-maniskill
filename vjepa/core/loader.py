@@ -1,31 +1,8 @@
-"""
-Loads V-JEPA 2-AC and exposes the two operations everything else needs:
-`encode()` and `predict_next()`.
-
-Why this does not use torch.hub
--------------------------------
-Two independent upstream problems:
-
-1. `facebookresearch/vjepa2` ships src/hub/backbones.py with a debug value left
-   in -- `VJEPA_BASE_URL = "http://localhost:8300"` -- so nothing downloads.
-2. The real checkpoint, dl.fbaipublicfiles.com/vjepa2/vjepa2-ac-vitg.pt, is
-   11.76 GB (it carries optimizer state).
-
-So we vendor the model source in ./vjepa2_src and pull the stripped 5.27 GB
-inference checkpoint from the Hugging Face mirror `facebook/jepa-wms` instead.
-
-Memory
-------
-The checkpoint is fp32 and the encoder is ViT-giant. Building the model
-normally would need ~4 GB of CPU RAM for fp32 weights on top of the ~5.3 GB
-checkpoint. Instead the modules are built on the meta device and the weights
-are cast to fp16 tensor-by-tensor and installed with assign=True, so peak host
-RAM stays near the size of the checkpoint alone.
-
-Conventions
------------
-`states` and `actions` here are always DROID-convention (euler + gripper
-closedness, metric deltas). Use adapter.py to get them from ManiSkill.
+"""Loads V-JEPA 2-AC and exposes the two operations everything else needs,
+`encode()` and `predict_next()`. Builds from the vendored source and the 5.27 GB
+Hugging Face checkpoint, in fp16, because torch.hub is broken upstream and the
+official checkpoint is 11.76 GB. States and actions here are always DROID
+convention; use adapter.py to get them from ManiSkill.
 """
 
 import os

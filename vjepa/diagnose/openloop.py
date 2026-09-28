@@ -1,25 +1,8 @@
-"""
-Open-loop prediction error vs horizon. This is the real gate -- run it before
-writing any planner.
+"""Open-loop prediction error against horizon, with two controls: the same actions
+shuffled (does the model use actions at all) and a static baseline (does it model
+dynamics or only appearance). Run this before writing any planner.
 
-Feeds the model frame 0 plus a sequence of actions, rolls forward in latent
-space without ever seeing another real frame, and compares each imagined latent
-against the encoded real frame.
-
-Three curves are produced, and only the comparison between them means anything:
-
-  true      rolled with the actions the robot actually executed
-  shuffled  the same actions in a random order -- a control. If this matches
-            `true`, the model is ignoring the actions and every planning result
-            downstream would be noise.
-  static    error of simply asserting nothing changes (rep of frame 0 vs rep of
-            frame h). A world model that cannot beat this is not modelling
-            dynamics, only appearance.
-
-Poses are propagated through the actions rather than read from the simulator,
-because reading them back would leak ground-truth state into an open-loop test.
-
-    python3 openloop.py --horizon 12
+    python3 -m vjepa.diagnose.openloop --horizon 12
 """
 
 import argparse

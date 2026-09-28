@@ -1,26 +1,10 @@
-"""
-Hierarchical planning: probe large, execute small.
+"""Coarse-to-fine planning: evaluate candidates as large probe displacements, where
+imagined outcomes separate well above the decoder's noise, then execute only the
+winning direction as a small step and re-plan. This is the planner that works.
+`--ablate-predictor` replaces the world model with `offset - action`, which
+scores better; see RESULTS.md result 14.
 
-Nine planner variants stalled at 3.6-4.0 cm. action_gain.py and
-decoder_on_predicted.py explain why: CEM ranks candidates whose IMAGINED
-positions differ by (action cap x 0.34 gain) ~= 1.7 cm, against 1.5-2.3 cm of
-error in decoding an imagined state. Signal ~= noise, so near the cube the
-ranking is meaningless.
-
-The trap is that one number set both the evaluation scale and the execution
-scale. Small steps give precision but indistinguishable candidates; large steps
-distinguish them but overshoot. Nothing requires the two to be equal.
-
-So: evaluate candidates as LARGE probe displacements, where imagined outcomes
-separate well above the decoder's noise, then execute only the winning
-DIRECTION as a small step, and re-plan. The world model still chooses -- it just
-gets asked a question it can actually answer ("which way?" rather than "which of
-these 48 nearly identical nudges?").
-
-This is the coarse-to-fine idea from the literature (Coarse-to-Fine Q-attention,
-Subgoal Diffuser, Hierarchical World Models) applied to our specific bottleneck.
-
-    python3 hier_plan.py --seeds 6 --probe 0.12 --exec 0.015
+    python3 -m vjepa.plan.hier_plan --seeds 30 --probe 0.12 --exec 0.015
 """
 
 import argparse

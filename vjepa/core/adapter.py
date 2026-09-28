@@ -1,25 +1,6 @@
-"""
-ManiSkill <-> V-JEPA 2-AC convention conversion.
-
-This module exists because of a trap: ManiSkill's `extra/tcp_pose` and
-V-JEPA 2-AC's `states` input are BOTH 7-dimensional, so they concatenate and
-run without error -- and mean completely different things.
-
-    ManiSkill tcp_pose : [x, y, z, qw, qx, qy, qz]        quaternion
-    V-JEPA 2-AC state  : [x, y, z, roll, pitch, yaw, g]   euler + gripper
-
-Verified against notebooks/franka_example_traj.npz in the upstream repo, whose
-`states` are euler with a 0..1 gripper closedness in the last slot.
-
-Actions have a second, independent mismatch:
-
-    ManiSkill pd_ee_delta_pose : 7-dim, each in [-1, 1], scaled by the
-                                 controller to +/-0.1 m and +/-0.1 rad.
-    V-JEPA 2-AC action         : 7-dim METRIC deltas, [dx,dy,dz,dr,dp,dy,dg],
-                                 trained on |dxyz| <~ 0.05 m (DROID).
-
-Feeding raw ManiSkill actions to the predictor overstates every motion by ~10x
-at full scale. Both conversions are applied here and nowhere else.
+"""ManiSkill <-> V-JEPA 2-AC conventions: quaternion/euler poses and
+normalised/metric actions. Applied here and nowhere else. See the README for why
+the mismatch is silent.
 """
 
 import numpy as np

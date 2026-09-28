@@ -1,21 +1,8 @@
-"""
-Records a fixture trajectory from ManiSkill in V-JEPA 2-AC's conventions.
+"""Records a fixture trajectory from ManiSkill in V-JEPA 2-AC conventions, as
+frames, actions (raw and metric) and states. Actions are a smoothed random walk,
+since independent samples cancel out to near-zero net motion.
 
-Writes traj.npz with
-    frames       (T, 256, 256, 3) uint8
-    ms_actions   (T, 7)  what was passed to env.step, in [-1, 1]
-    actions      (T, 7)  the same actions in metric DROID units
-    states       (T, 7)  [x, y, z, roll, pitch, yaw, closedness]
-
-The metric/euler conversion is the whole point -- see adapter.py. Storing the
-raw ManiSkill tcp_pose would give a 7-vector that loads fine and means the
-wrong thing.
-
-Actions are a smoothed random walk rather than i.i.d. samples: independent
-samples average out to near-zero net motion, which makes an action-conditioning
-test vacuous because nothing moves.
-
-    python3 record.py --steps 32
+    python3 -m vjepa.core.record --steps 32
 """
 
 import argparse
